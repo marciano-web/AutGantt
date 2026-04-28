@@ -57,15 +57,16 @@ function isoFromDate(d: Date) {
 function TitleCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
   const stage = ctx?.stagesById.get(data.task.id);
-  if (!stage)
-    return <div className="px-2 truncate">{(data.task as Task).name}</div>;
+  if (!stage) {
+    // linha de projeto (parent)
+    return (
+      <div className="px-2 py-1 font-semibold text-sm truncate">
+        {(data.task as Task).name}
+      </div>
+    );
+  }
   return (
     <div className="px-2 py-1 truncate">
-      {stage.projects?.nome && (
-        <div className="text-[10px] text-muted-foreground truncate">
-          {stage.projects.nome}
-        </div>
-      )}
       <div className="font-medium text-xs truncate">
         {stage.ordem}. {stage.nome}
       </div>
@@ -222,6 +223,22 @@ function TimerCell({ data }: ColumnProps) {
 
 function CostCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
+  const stage = ctx?.stagesById.get(data.task.id);
+  // linha de projeto: soma dos filhos
+  if (!stage) {
+    if (!ctx) return null;
+    const projectId = String(data.task.id).replace(/^p-/, "");
+    let total = 0;
+    for (const s of ctx.stagesById.values()) {
+      if (s.project_id === projectId)
+        total += Number(ctx.realByStage.get(s.id)?.custo_real ?? 0);
+    }
+    return (
+      <div className="px-2 text-right text-xs tabular-nums w-full font-semibold">
+        {brl(total)}
+      </div>
+    );
+  }
   const real = ctx?.realByStage.get(data.task.id);
   return (
     <div className="px-2 text-right text-xs tabular-nums w-full">
@@ -306,6 +323,7 @@ export default function ProjectGantt({
   meId = "",
   projectId,
   readOnly = false,
+  groupByProject = false,
 }: {
   stages: StageInput[];
   real?: StageRealView[];
@@ -313,6 +331,7 @@ export default function ProjectGantt({
   meId?: string;
   projectId?: string;
   readOnly?: boolean;
+  groupByProject?: boolean;
 }) {
   const [view, setView] = useState<ViewMode>(ViewMode.Day);
 
@@ -332,9 +351,9 @@ export default function ProjectGantt({
     [stages, real, entries, meId, projectId],
   );
 
-  const tasks: Task[] = useMemo(
-    () =>
-      stages.map((s) => ({
+  const tasks: Task[] = useMemo(() => {
+    if (!groupByProject) {
+      return stages.map((s) => ({
         id: s.id,
         name: `${s.ordem}. ${s.nome}`,
         start: new Date(s.start_date + "T00:00:00"),
@@ -347,9 +366,52 @@ export default function ProjectGantt({
           barProgressColor: progressColor(s.status),
           barProgressSelectedColor: progressColor(s.status),
         },
-      })),
-    [stages],
-  );
+      }));
+    }
+    // agrupado: 1 linha "project" por projeto + filhos
+    const byProject = new Map<string, StageInput[]>();
+    for (const s of stages) {
+      if (!byProject.has(s.project_id)) byProject.set(s.project_id, []);
+      byProject.get(s.project_id)!.push(s);
+    }
+    const out: Task[] = [];
+    for (const [pid, items] of byProject) {
+      let minStart = items[0].start_date;
+      let maxEnd = items[0].end_date;
+      for (const s of items) {
+        if (s.start_date < minStart) minStart = s.start_date;
+        if (s.end_date > maxEnd) maxEnd = s.end_date;
+      }
+      const projectName = items[0].projects?.nome ?? "Projeto";
+      out.push({
+        id: `p-${pid}`,
+        name: projectName,
+        start: new Date(minStart + "T00:00:00"),
+        end: new Date(maxEnd + "T23:59:59"),
+        progress: 0,
+        type: "project",
+        hideChildren: false,
+      });
+      for (const s of items) {
+        out.push({
+          id: s.id,
+          name: `${s.ordem}. ${s.nome}`,
+          start: new Date(s.start_date + "T00:00:00"),
+          end: new Date(s.end_date + "T23:59:59"),
+          progress: s.progresso ?? 0,
+          type: "task",
+          parent: `p-${pid}`,
+          styles: {
+            barBackgroundColor: barColor(s.status),
+            barBackgroundSelectedColor: barColor(s.status),
+            barProgressColor: progressColor(s.status),
+            barProgressSelectedColor: progressColor(s.status),
+          },
+        });
+      }
+    }
+    return out;
+  }, [stages, groupByProject]);
 
   if (tasks.length === 0)
     return (

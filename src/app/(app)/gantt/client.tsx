@@ -50,6 +50,7 @@ export function GlobalGanttClient({
             real={real}
             entries={entries}
             meId={meId}
+            groupByProject
           />
         </CardContent>
       </Card>
