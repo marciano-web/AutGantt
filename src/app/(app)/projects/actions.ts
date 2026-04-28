@@ -2,27 +2,23 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isBusinessDay } from "@/lib/holidays";
 
 const HOURS_PER_DAY = 8;
 
-function isWeekend(d: Date) {
-  const dow = d.getDay();
-  return dow === 0 || dow === 6;
-}
-
 function nextBusinessDay(d: Date) {
   const r = new Date(d);
-  while (isWeekend(r)) r.setDate(r.getDate() + 1);
+  while (!isBusinessDay(r)) r.setDate(r.getDate() + 1);
   return r;
 }
 
 function addBusinessDays(start: Date, count: number) {
   const r = new Date(start);
-  while (isWeekend(r)) r.setDate(r.getDate() + 1);
+  while (!isBusinessDay(r)) r.setDate(r.getDate() + 1);
   let added = 0;
   while (added < count - 1) {
     r.setDate(r.getDate() + 1);
-    if (!isWeekend(r)) added++;
+    if (isBusinessDay(r)) added++;
   }
   return r;
 }
@@ -195,20 +191,35 @@ async function capacityWarningsForProject(
   return out;
 }
 
-function intervalsOverlap(a1: Date, a2: Date, b1: Date, b2: Date) {
-  return a1.getTime() <= b2.getTime() && b1.getTime() <= a2.getTime();
+function isOccupied(
+  d: Date,
+  intervals: { start: Date; end: Date }[],
+): boolean {
+  const t = d.getTime();
+  for (const iv of intervals) {
+    if (t >= iv.start.getTime() && t <= iv.end.getTime()) return true;
+  }
+  return false;
 }
 
 export async function rescheduleProjectByCapacity(projectId: string) {
   const supabase = await createClient();
   const { data: stages } = await supabase
     .from("project_stages")
-    .select("id, ordem, start_date, end_date, horas_estimadas, assignee_id")
+    .select(
+      "id, ordem, nome, start_date, end_date, horas_estimadas, assignee_id, status, progresso, stage_template_id",
+    )
     .eq("project_id", projectId)
     .order("ordem");
   if (!stages) return { error: "Projeto sem etapas" };
 
-  // Coleta usuários atribuídos neste projeto
+  // Janela inicial = data mínima atual
+  const projectStart = stages.reduce(
+    (a, s) => ((s.start_date as string) < a ? (s.start_date as string) : a),
+    stages[0]?.start_date as string,
+  );
+
+  // Coleta etapas existentes em OUTROS projetos pra cada user
   const userIds = Array.from(
     new Set(
       stages
@@ -216,13 +227,11 @@ export async function rescheduleProjectByCapacity(projectId: string) {
         .filter((x): x is string => !!x),
     ),
   );
-
-  // Busca etapas DESSES usuários em OUTROS projetos (que continuam fixas)
   const occupied: Record<string, { start: Date; end: Date }[]> = {};
   if (userIds.length > 0) {
     const { data: other } = await supabase
       .from("project_stages")
-      .select("assignee_id, start_date, end_date, project_id")
+      .select("assignee_id, start_date, end_date")
       .in("assignee_id", userIds)
       .neq("project_id", projectId);
     for (const o of other ?? []) {
@@ -233,81 +242,169 @@ export async function rescheduleProjectByCapacity(projectId: string) {
         end: new Date((o.end_date as string) + "T00:00:00"),
       });
     }
-    for (const uid of userIds) {
-      if (occupied[uid])
-        occupied[uid].sort((a, b) => a.start.getTime() - b.start.getTime());
-    }
+  }
+  for (const uid of userIds) {
+    if (!occupied[uid]) occupied[uid] = [];
   }
 
   const userCursors: Record<string, Date> = {};
-  const updates: { id: string; start_date: string; end_date: string }[] = [];
+
+  type StageUpdate = {
+    id: string;
+    nome: string;
+    ordem: number;
+    start_date: string;
+    end_date: string;
+    horas_estimadas: number;
+  };
+  type StageInsert = {
+    project_id: string;
+    stage_template_id: string | null;
+    assignee_id: string | null;
+    nome: string;
+    ordem: number;
+    start_date: string;
+    end_date: string;
+    horas_estimadas: number;
+    status: string;
+    progresso: number;
+  };
+
+  const updates: StageUpdate[] = [];
+  const inserts: StageInsert[] = [];
+  let nextOrdem = 1;
 
   for (const s of stages) {
-    let startDate = nextBusinessDay(
-      new Date((s.start_date as string) + "T00:00:00"),
-    );
-
-    const horas = Number(s.horas_estimadas ?? 0);
-    const days = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
-
-    if (s.assignee_id) {
-      const uid = s.assignee_id as string;
-      // (1) cursor: serialização dentro deste projeto
-      const cursor = userCursors[uid];
-      if (cursor && cursor > startDate) startDate = new Date(cursor);
-
-      // (2) avança sobre intervalos ocupados por outros projetos do mesmo usuário
-      // re-checa em loop pq advance pode cair em outro intervalo
-      while (true) {
-        const tentativeEnd = addBusinessDays(startDate, days);
-        const conflict = (occupied[uid] ?? []).find((b) =>
-          intervalsOverlap(startDate, tentativeEnd, b.start, b.end),
-        );
-        if (!conflict) break;
-        const after = new Date(conflict.end);
-        after.setDate(after.getDate() + 1);
-        startDate = nextBusinessDay(after);
-      }
-
-      const endDate = addBusinessDays(startDate, days);
+    if (!s.assignee_id) {
+      // sem responsável: mantém datas e horas, só renumera
       updates.push({
         id: s.id as string,
-        start_date: toISO(startDate),
-        end_date: toISO(endDate),
-      });
-
-      // adiciona aos ocupados pra próximas etapas do mesmo user neste projeto também respeitarem
-      occupied[uid] = occupied[uid] ?? [];
-      occupied[uid].push({ start: new Date(startDate), end: new Date(endDate) });
-      occupied[uid].sort((a, b) => a.start.getTime() - b.start.getTime());
-
-      const next = new Date(endDate);
-      next.setDate(next.getDate() + 1);
-      userCursors[uid] = nextBusinessDay(next);
-    } else {
-      // sem assignee: mantém datas atuais
-      updates.push({
-        id: s.id as string,
+        nome: s.nome as string,
+        ordem: nextOrdem++,
         start_date: s.start_date as string,
         end_date: s.end_date as string,
+        horas_estimadas: Number(s.horas_estimadas ?? 0),
       });
+      continue;
     }
+
+    const uid = s.assignee_id as string;
+    const horas = Number(s.horas_estimadas ?? 0);
+    const totalDays = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
+
+    // ponto de partida: max(data atual da etapa, cursor do usuário, início do projeto)
+    const startCandidate = new Date(
+      (s.start_date as string) + "T00:00:00",
+    );
+    const projStart = new Date(projectStart + "T00:00:00");
+    let cursor = nextBusinessDay(
+      startCandidate < projStart ? projStart : startCandidate,
+    );
+    const userCursor = userCursors[uid];
+    if (userCursor && userCursor > cursor) cursor = new Date(userCursor);
+
+    // Empacotamento: vai colocando bloquinhos contíguos até completar totalDays
+    type Part = { start: Date; end: Date; days: number };
+    const parts: Part[] = [];
+    let remaining = totalDays;
+
+    while (remaining > 0) {
+      // 1) avança até achar dia livre (não ocupado)
+      let placeStart = nextBusinessDay(cursor);
+      while (isOccupied(placeStart, occupied[uid])) {
+        placeStart = new Date(placeStart);
+        placeStart.setDate(placeStart.getDate() + 1);
+        placeStart = nextBusinessDay(placeStart);
+      }
+
+      // 2) avança consecutivos enquanto livre, até completar remaining
+      let placeEnd = new Date(placeStart);
+      let daysPlaced = 1;
+      while (daysPlaced < remaining) {
+        const probe = new Date(placeEnd);
+        probe.setDate(probe.getDate() + 1);
+        const next = nextBusinessDay(probe);
+        if (isOccupied(next, occupied[uid])) break;
+        placeEnd = next;
+        daysPlaced++;
+      }
+
+      parts.push({ start: placeStart, end: placeEnd, days: daysPlaced });
+
+      // adiciona aos ocupados (para que próximas partes/etapas não pisem aqui)
+      occupied[uid].push({ start: new Date(placeStart), end: new Date(placeEnd) });
+
+      remaining -= daysPlaced;
+      const after = new Date(placeEnd);
+      after.setDate(after.getDate() + 1);
+      cursor = nextBusinessDay(after);
+    }
+
+    userCursors[uid] = cursor;
+
+    // Distribui horas proporcional aos dias de cada parte
+    const totalDaysReal = parts.reduce((a, p) => a + p.days, 0) || 1;
+    parts.forEach((part, i) => {
+      const partHoras =
+        Math.round(((horas * part.days) / totalDaysReal) * 100) / 100;
+      const baseName = (s.nome as string).replace(/ \(parte \d+\/\d+\)$/, "");
+      const nome =
+        parts.length > 1
+          ? `${baseName} (parte ${i + 1}/${parts.length})`
+          : baseName;
+      if (i === 0) {
+        updates.push({
+          id: s.id as string,
+          nome,
+          ordem: nextOrdem++,
+          start_date: toISO(part.start),
+          end_date: toISO(part.end),
+          horas_estimadas: partHoras,
+        });
+      } else {
+        inserts.push({
+          project_id: projectId,
+          stage_template_id: (s.stage_template_id as string | null) ?? null,
+          assignee_id: uid,
+          nome,
+          ordem: nextOrdem++,
+          start_date: toISO(part.start),
+          end_date: toISO(part.end),
+          horas_estimadas: partHoras,
+          status: (s.status as string) ?? "planejado",
+          progresso: 0,
+        });
+      }
+    });
   }
 
+  // Aplica updates (em duas passadas: ordem temporário negativo pra evitar colisão visual)
+  // (project_stages.ordem não tem UNIQUE, mas faz update direto pra simplicidade)
   for (const u of updates) {
     const { error } = await supabase
       .from("project_stages")
-      .update({ start_date: u.start_date, end_date: u.end_date })
+      .update({
+        nome: u.nome,
+        ordem: u.ordem,
+        start_date: u.start_date,
+        end_date: u.end_date,
+        horas_estimadas: u.horas_estimadas,
+      })
       .eq("id", u.id);
     if (error) return { error: error.message };
   }
 
-  // janela do projeto = (min start, max end)
+  if (inserts.length > 0) {
+    const { error } = await supabase.from("project_stages").insert(inserts);
+    if (error) return { error: error.message };
+  }
+
+  // janela do projeto
   let minStart = updates[0]?.start_date;
   let maxEnd = updates[0]?.end_date;
-  for (const u of updates) {
-    if (u.start_date < minStart) minStart = u.start_date;
-    if (u.end_date > maxEnd) maxEnd = u.end_date;
+  for (const u of [...updates, ...inserts]) {
+    if (!minStart || u.start_date < minStart) minStart = u.start_date;
+    if (!maxEnd || u.end_date > maxEnd) maxEnd = u.end_date;
   }
   if (minStart && maxEnd) {
     await supabase
@@ -320,7 +417,7 @@ export async function rescheduleProjectByCapacity(projectId: string) {
   revalidatePath("/projects");
   revalidatePath("/gantt");
   revalidatePath("/calendar");
-  return { ok: true };
+  return { ok: true, splitsCreated: inserts.length };
 }
 
 export async function updateProject(id: string, formData: FormData) {
