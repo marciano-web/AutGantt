@@ -29,7 +29,6 @@ import {
   upsertStageTemplate,
 } from "./actions";
 import type { DemandType, StageTemplate } from "@/lib/types";
-import { brl } from "@/lib/utils";
 
 export function DemandTypesClient({
   types,
@@ -116,9 +115,7 @@ export function DemandTypesClient({
                   <TR>
                     <TH>#</TH>
                     <TH>Etapa</TH>
-                    <TH className="text-right">Horas</TH>
-                    <TH className="text-right">Dias úteis</TH>
-                    <TH className="text-right">Custo fixo</TH>
+                    <TH className="text-right">Horas estimadas</TH>
                     {isAdmin && <TH />}
                   </TR>
                 </THead>
@@ -128,8 +125,6 @@ export function DemandTypesClient({
                       <TD className="w-12">{t.ordem}</TD>
                       <TD className="font-medium">{t.nome}</TD>
                       <TD className="text-right">{Number(t.horas_default).toFixed(1)}</TD>
-                      <TD className="text-right">{t.duracao_dias_default}</TD>
-                      <TD className="text-right">{brl(t.custo_fixo_default)}</TD>
                       {isAdmin && (
                         <TD className="text-right w-24">
                           <div className="flex justify-end gap-1">
@@ -297,35 +292,18 @@ function NewTemplateDialog({
           }}
           className="grid gap-4"
         >
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
+          <div className="grid grid-cols-6 gap-3">
+            <div className="grid gap-2 col-span-1">
               <Label>Ordem</Label>
               <Input name="ordem" type="number" defaultValue={nextOrdem} required />
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-2 col-span-3">
               <Label>Nome</Label>
               <Input name="nome" required />
             </div>
-            <div className="grid gap-2">
-              <Label>Horas</Label>
-              <Input name="horas_default" type="number" step="0.5" defaultValue={8} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Dias úteis</Label>
-              <Input
-                name="duracao_dias_default"
-                type="number"
-                defaultValue={1}
-              />
-            </div>
             <div className="grid gap-2 col-span-2">
-              <Label>Custo fixo (R$)</Label>
-              <Input
-                name="custo_fixo_default"
-                type="number"
-                step="0.01"
-                defaultValue={0}
-              />
+              <Label>Horas estimadas</Label>
+              <Input name="horas_default" type="number" step="0.5" defaultValue={8} />
             </div>
           </div>
           <DialogFooter>
@@ -364,39 +342,22 @@ function EditTemplateDialog({ template }: { template: StageTemplate }) {
           }}
           className="grid gap-4"
         >
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-2">
+          <div className="grid grid-cols-6 gap-3">
+            <div className="grid gap-2 col-span-1">
               <Label>Ordem</Label>
               <Input name="ordem" type="number" defaultValue={template.ordem} required />
             </div>
-            <div className="grid gap-2">
+            <div className="grid gap-2 col-span-3">
               <Label>Nome</Label>
               <Input name="nome" defaultValue={template.nome} required />
             </div>
-            <div className="grid gap-2">
-              <Label>Horas</Label>
+            <div className="grid gap-2 col-span-2">
+              <Label>Horas estimadas</Label>
               <Input
                 name="horas_default"
                 type="number"
                 step="0.5"
                 defaultValue={template.horas_default}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>Dias úteis</Label>
-              <Input
-                name="duracao_dias_default"
-                type="number"
-                defaultValue={template.duracao_dias_default}
-              />
-            </div>
-            <div className="grid gap-2 col-span-2">
-              <Label>Custo fixo (R$)</Label>
-              <Input
-                name="custo_fixo_default"
-                type="number"
-                step="0.01"
-                defaultValue={template.custo_fixo_default}
               />
             </div>
           </div>

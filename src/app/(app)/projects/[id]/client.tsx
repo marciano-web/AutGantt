@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,16 +29,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import { brl, fmtDate } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { brl, fmtDate, fmtDuration } from "@/lib/utils";
+import { StageTimer } from "@/components/stage-timer";
 import {
   deleteProject,
   deleteStage,
+  deleteTimeEntry,
   updateProject,
   upsertStage,
 } from "../actions";
@@ -47,6 +44,8 @@ import type {
   Project,
   ProjectCostView,
   ProjectStage,
+  StageRealView,
+  TimeEntry,
 } from "@/lib/types";
 
 const ProjectGantt = dynamic(() => import("@/components/project-gantt"), {
@@ -57,23 +56,42 @@ type StageWithProfile = ProjectStage & {
   profiles: { full_name: string } | null;
 };
 type ProjectWithType = Project & { demand_types: { nome: string } | null };
+type TimeEntryRow = TimeEntry & { profiles: { full_name: string } | null };
 
 export function ProjectDetailClient({
   project,
   stages,
   profiles,
   cost,
+  real,
+  entries,
+  meId,
 }: {
   project: ProjectWithType;
   stages: StageWithProfile[];
   profiles: Pick<Profile, "id" | "full_name" | "email">[];
   cost: ProjectCostView | null;
+  real: StageRealView[];
+  entries: TimeEntryRow[];
+  meId: string;
 }) {
-  const totalH = stages.reduce(
+  const realByStage = useMemo(
+    () => new Map(real.map((r) => [r.stage_id, r])),
+    [real],
+  );
+  const runningByStage = useMemo(() => {
+    const m = new Map<string, TimeEntryRow>();
+    for (const e of entries)
+      if (e.ended_at === null && e.user_id === meId) m.set(e.stage_id, e);
+    return m;
+  }, [entries, meId]);
+
+  const totalH = real.reduce((a, r) => a + Number(r.horas_reais ?? 0), 0);
+  const totalCost = real.reduce((a, r) => a + Number(r.custo_real ?? 0), 0);
+  const totalEst = stages.reduce(
     (a, s) => a + Number(s.horas_estimadas ?? 0),
     0,
   );
-  const totalCost = stages.reduce((a, s) => a + Number(s.custo_calc ?? 0), 0);
   const nextOrdem = (stages.at(-1)?.ordem ?? 0) + 1;
 
   return (
@@ -107,12 +125,17 @@ export function ProjectDetailClient({
         <Stat label="Status" value={project.status.replace("_", " ")} />
         <Stat label="Início" value={fmtDate(project.start_date)} />
         <Stat label="Fim" value={fmtDate(project.end_date)} />
-        <Stat label="Horas / Custo" value={`${totalH.toFixed(1)} h · ${brl(totalCost)}`} />
+        <Stat
+          label="Horas reais · estimadas"
+          value={`${totalH.toFixed(1)}h · ${totalEst.toFixed(1)}h`}
+        />
+        <Stat label="Custo real" value={brl(totalCost)} />
       </div>
 
       <Tabs defaultValue="stages">
         <TabsList>
           <TabsTrigger value="stages">Etapas</TabsTrigger>
+          <TabsTrigger value="timesheet">Apontamentos</TabsTrigger>
           <TabsTrigger value="gantt">Gantt</TabsTrigger>
         </TabsList>
 
@@ -122,8 +145,9 @@ export function ProjectDetailClient({
               <div>
                 <CardTitle className="text-base">Etapas</CardTitle>
                 <CardDescription>
-                  Custo recalculado automaticamente. Acima da jornada ×
-                  dias_úteis, vira hora extra do assignee.
+                  Custo real é calculado a partir do tempo logado pelo
+                  responsável de cada apontamento (snapshot do custo/h no
+                  momento do start).
                 </CardDescription>
               </div>
               <StageDialog
@@ -135,7 +159,11 @@ export function ProjectDetailClient({
                     Etapa
                   </Button>
                 }
-                defaults={{ ordem: nextOrdem }}
+                defaults={{
+                  ordem: nextOrdem,
+                  start_date: project.start_date ?? "",
+                  end_date: project.start_date ?? "",
+                }}
               />
             </CardHeader>
             <CardContent>
@@ -145,66 +173,173 @@ export function ProjectDetailClient({
                     <TH>#</TH>
                     <TH>Etapa</TH>
                     <TH>Responsável</TH>
-                    <TH>Início</TH>
-                    <TH>Fim</TH>
-                    <TH className="text-right">Horas</TH>
-                    <TH className="text-right">Progresso</TH>
-                    <TH className="text-right">Custo</TH>
+                    <TH>Datas</TH>
+                    <TH className="text-right">Horas est.</TH>
+                    <TH>Timer</TH>
+                    <TH className="text-right">Custo real</TH>
                     <TH />
                   </TR>
                 </THead>
                 <TBody>
                   {stages.length === 0 && (
                     <TR>
-                      <TD colSpan={9} className="text-center py-8 text-muted-foreground">
-                        Sem etapas. Crie tipos de demanda com etapas-padrão para gerar automaticamente.
+                      <TD
+                        colSpan={8}
+                        className="text-center py-8 text-muted-foreground"
+                      >
+                        Sem etapas. Crie tipos de demanda com etapas-padrão
+                        para gerar automaticamente.
                       </TD>
                     </TR>
                   )}
-                  {stages.map((s) => (
-                    <TR key={s.id}>
-                      <TD className="w-12">{s.ordem}</TD>
-                      <TD className="font-medium">{s.nome}</TD>
-                      <TD>{s.profiles?.full_name ?? "—"}</TD>
-                      <TD>{fmtDate(s.start_date)}</TD>
-                      <TD>{fmtDate(s.end_date)}</TD>
-                      <TD className="text-right">
-                        {Number(s.horas_estimadas).toFixed(1)}
-                      </TD>
-                      <TD className="text-right">{s.progresso}%</TD>
-                      <TD className="text-right font-medium">
-                        {brl(s.custo_calc)}
-                      </TD>
-                      <TD className="text-right w-24">
-                        <div className="flex justify-end gap-1">
-                          <StageDialog
-                            projectId={project.id}
-                            profiles={profiles}
-                            stage={s}
-                            trigger={
-                              <Button size="icon" variant="ghost">
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            }
+                  {stages.map((s) => {
+                    const r = realByStage.get(s.id);
+                    const isMe = s.assignee_id === meId;
+                    const running = runningByStage.get(s.id);
+                    return (
+                      <TR key={s.id}>
+                        <TD className="w-12">{s.ordem}</TD>
+                        <TD className="font-medium">{s.nome}</TD>
+                        <TD>{s.profiles?.full_name ?? "—"}</TD>
+                        <TD className="whitespace-nowrap text-xs">
+                          {fmtDate(s.start_date)} →{" "}
+                          {fmtDate(s.end_date)}
+                        </TD>
+                        <TD className="text-right">
+                          {Number(s.horas_estimadas).toFixed(1)}
+                        </TD>
+                        <TD>
+                          <StageTimer
+                            stageId={s.id}
+                            isAssignee={isMe}
+                            runningStartedAt={running?.started_at ?? null}
+                            baselineSeconds={Math.round(
+                              Number(r?.horas_reais ?? 0) * 3600 -
+                                (running
+                                  ? (Date.now() -
+                                      new Date(running.started_at).getTime()) /
+                                    1000
+                                  : 0),
+                            )}
                           />
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={async () => {
-                              if (!confirm("Excluir esta etapa?")) return;
-                              const r = await deleteStage(project.id, s.id);
-                              if (r.error) toast.error(r.error);
-                              else toast.success("Etapa removida");
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TD>
-                    </TR>
-                  ))}
+                        </TD>
+                        <TD className="text-right font-medium">
+                          {brl(r?.custo_real ?? 0)}
+                        </TD>
+                        <TD className="text-right w-24">
+                          <div className="flex justify-end gap-1">
+                            <StageDialog
+                              projectId={project.id}
+                              profiles={profiles}
+                              stage={s}
+                              trigger={
+                                <Button size="icon" variant="ghost">
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              }
+                            />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={async () => {
+                                if (!confirm("Excluir esta etapa?")) return;
+                                const res = await deleteStage(project.id, s.id);
+                                if (res.error) toast.error(res.error);
+                                else toast.success("Etapa removida");
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TD>
+                      </TR>
+                    );
+                  })}
                 </TBody>
               </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="timesheet">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Apontamentos de tempo</CardTitle>
+              <CardDescription>
+                Histórico de start/stop. O custo é congelado no início de cada
+                apontamento (snapshot do custo/h do usuário).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {entries.length === 0 ? (
+                <div className="text-sm text-muted-foreground py-6 text-center">
+                  Nenhum apontamento ainda.
+                </div>
+              ) : (
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Etapa</TH>
+                      <TH>Usuário</TH>
+                      <TH>Início</TH>
+                      <TH>Fim</TH>
+                      <TH className="text-right">Duração</TH>
+                      <TH className="text-right">Custo/h</TH>
+                      <TH className="text-right">Custo</TH>
+                      <TH />
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {entries.map((e) => {
+                      const stage = stages.find((s) => s.id === e.stage_id);
+                      const seconds = e.ended_at
+                        ? (new Date(e.ended_at).getTime() -
+                            new Date(e.started_at).getTime()) /
+                          1000
+                        : 0;
+                      const cost = (seconds / 3600) * Number(e.hourly_rate);
+                      return (
+                        <TR key={e.id}>
+                          <TD>{stage?.nome ?? "—"}</TD>
+                          <TD>{e.profiles?.full_name ?? "—"}</TD>
+                          <TD className="text-xs">
+                            {new Date(e.started_at).toLocaleString("pt-BR")}
+                          </TD>
+                          <TD className="text-xs">
+                            {e.ended_at
+                              ? new Date(e.ended_at).toLocaleString("pt-BR")
+                              : <span className="text-success">⏵ rodando</span>}
+                          </TD>
+                          <TD className="text-right tabular-nums">
+                            {e.ended_at ? fmtDuration(seconds) : "—"}
+                          </TD>
+                          <TD className="text-right">{brl(e.hourly_rate)}</TD>
+                          <TD className="text-right font-medium">
+                            {e.ended_at ? brl(cost) : "—"}
+                          </TD>
+                          <TD className="text-right">
+                            {e.user_id === meId && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={async () => {
+                                  if (!confirm("Excluir esse apontamento?"))
+                                    return;
+                                  const r = await deleteTimeEntry(e.id);
+                                  if (r.error) toast.error(r.error);
+                                  else toast.success("Apontamento removido");
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </TD>
+                        </TR>
+                      );
+                    })}
+                  </TBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -305,7 +440,7 @@ function StageDialog({
   stage?: StageWithProfile;
   profiles: Pick<Profile, "id" | "full_name" | "email">[];
   trigger: React.ReactNode;
-  defaults?: { ordem?: number };
+  defaults?: { ordem?: number; start_date?: string; end_date?: string };
 }) {
   const [open, setOpen] = useState(false);
   const [assignee, setAssignee] = useState<string>(stage?.assignee_id ?? "");
@@ -354,7 +489,7 @@ function StageDialog({
               <Input
                 name="start_date"
                 type="date"
-                defaultValue={stage?.start_date ?? ""}
+                defaultValue={stage?.start_date ?? defaults?.start_date ?? ""}
                 required
               />
             </div>
@@ -363,7 +498,7 @@ function StageDialog({
               <Input
                 name="end_date"
                 type="date"
-                defaultValue={stage?.end_date ?? ""}
+                defaultValue={stage?.end_date ?? defaults?.end_date ?? ""}
                 required
               />
             </div>
@@ -376,25 +511,7 @@ function StageDialog({
                 defaultValue={stage?.horas_estimadas ?? 0}
               />
             </div>
-            <div className="grid gap-2 col-span-2">
-              <Label>Horas reais</Label>
-              <Input
-                name="horas_realizadas"
-                type="number"
-                step="0.5"
-                defaultValue={stage?.horas_realizadas ?? 0}
-              />
-            </div>
-            <div className="grid gap-2 col-span-2">
-              <Label>Custo fixo (R$)</Label>
-              <Input
-                name="custo_fixo"
-                type="number"
-                step="0.01"
-                defaultValue={stage?.custo_fixo ?? 0}
-              />
-            </div>
-            <div className="grid gap-2 col-span-3">
+            <div className="grid gap-2 col-span-4">
               <Label>Responsável</Label>
               <Select value={assignee} onValueChange={setAssignee}>
                 <SelectTrigger>
@@ -410,9 +527,12 @@ function StageDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2 col-span-2">
+            <div className="grid gap-2 col-span-3">
               <Label>Status</Label>
-              <Select value={status} onValueChange={(v) => setStatus(v as ProjectStage["status"])}>
+              <Select
+                value={status}
+                onValueChange={(v) => setStatus(v as ProjectStage["status"])}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -424,8 +544,8 @@ function StageDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2 col-span-1">
-              <Label>%</Label>
+            <div className="grid gap-2 col-span-3">
+              <Label>Progresso (%)</Label>
               <Input
                 name="progresso"
                 type="number"
@@ -435,6 +555,14 @@ function StageDialog({
               />
             </div>
           </div>
+          {stage && (
+            <p className="text-xs text-muted-foreground">
+              <Clock className="inline h-3 w-3 mr-1" />
+              Trocar o responsável <strong>não apaga</strong> os apontamentos do
+              responsável anterior — eles continuam contando para o custo da
+              etapa com a taxa daquele momento.
+            </p>
+          )}
           <DialogFooter>
             <Button type="submit">Salvar</Button>
           </DialogFooter>

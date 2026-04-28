@@ -7,7 +7,6 @@ export type Profile = {
   role: Role;
   custo_hora: number;
   jornada_diaria_h: number;
-  adicional_he_pct: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -28,8 +27,6 @@ export type StageTemplate = {
   ordem: number;
   nome: string;
   horas_default: number;
-  custo_fixo_default: number;
-  duracao_dias_default: number;
   created_at: string;
 };
 
@@ -64,13 +61,18 @@ export type ProjectStage = {
   start_date: string;
   end_date: string;
   horas_estimadas: number;
-  horas_realizadas: number;
-  custo_fixo: number;
-  custo_calc: number;
   status: StageStatus;
   progresso: number;
   created_at: string;
   updated_at: string;
+};
+
+export type StageRealView = {
+  stage_id: string;
+  project_id: string;
+  horas_reais: number;
+  custo_real: number;
+  has_running: boolean;
 };
 
 export type ProjectCostView = {
@@ -78,5 +80,16 @@ export type ProjectCostView = {
   nome: string;
   custo_total: number;
   horas_total: number;
+  horas_estimadas_total: number;
   qtd_etapas: number;
+};
+
+export type TimeEntry = {
+  id: string;
+  stage_id: string;
+  user_id: string;
+  started_at: string;
+  ended_at: string | null;
+  hourly_rate: number;
+  created_at: string;
 };

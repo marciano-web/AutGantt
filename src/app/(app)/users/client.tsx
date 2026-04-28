@@ -66,7 +66,6 @@ export function UsersClient({
                 <TH>Role</TH>
                 <TH className="text-right">Custo/h</TH>
                 <TH className="text-right">Jornada</TH>
-                <TH className="text-right">+HE %</TH>
                 <TH>Status</TH>
                 <TH />
               </TR>
@@ -79,7 +78,6 @@ export function UsersClient({
                   <TD>{p.role}</TD>
                   <TD className="text-right">{brl(p.custo_hora)}</TD>
                   <TD className="text-right">{p.jornada_diaria_h} h</TD>
-                  <TD className="text-right">{p.adicional_he_pct}%</TD>
                   <TD>
                     <span
                       className={`text-xs px-2 py-0.5 rounded-full ${
@@ -157,7 +155,7 @@ function EditProfileDialog({
               </Select>
             </div>
           )}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>Custo / hora (R$)</Label>
               <Input
@@ -176,16 +174,11 @@ function EditProfileDialog({
                 defaultValue={profile.jornada_diaria_h}
               />
             </div>
-            <div className="grid gap-2">
-              <Label>Adicional HE (%)</Label>
-              <Input
-                name="adicional_he_pct"
-                type="number"
-                step="1"
-                defaultValue={profile.adicional_he_pct}
-              />
-            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Jornada é referência para a view de carga. Custo/hora é usado no
+            timer de cada etapa (snapshot no início).
+          </p>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"

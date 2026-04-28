@@ -44,8 +44,6 @@ export async function upsertStageTemplate(formData: FormData) {
     nome: String(formData.get("nome") ?? "").trim(),
     ordem: Number(formData.get("ordem") ?? 1),
     horas_default: Number(formData.get("horas_default") ?? 0),
-    custo_fixo_default: Number(formData.get("custo_fixo_default") ?? 0),
-    duracao_dias_default: Number(formData.get("duracao_dias_default") ?? 1),
   };
   if (!payload.nome) return { error: "Nome obrigatório" };
   const { error } = id

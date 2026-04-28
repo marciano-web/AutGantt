@@ -43,8 +43,8 @@ export default async function Page() {
                 <TH>Início</TH>
                 <TH>Fim</TH>
                 <TH className="text-right">Etapas</TH>
-                <TH className="text-right">Horas</TH>
-                <TH className="text-right">Custo</TH>
+                <TH className="text-right">Horas reais</TH>
+                <TH className="text-right">Custo real</TH>
               </TR>
             </THead>
             <TBody>

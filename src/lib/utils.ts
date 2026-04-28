@@ -18,35 +18,11 @@ export function fmtDate(d: string | Date | null | undefined) {
   return date.toLocaleDateString("pt-BR");
 }
 
-export function businessDays(d1: Date, d2: Date) {
-  if (d2 < d1) return 0;
-  let count = 0;
-  const cur = new Date(d1);
-  while (cur <= d2) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) count++;
-    cur.setDate(cur.getDate() + 1);
-  }
-  return count;
-}
-
-export function computeStageCost(args: {
-  horas: number;
-  custoFixo: number;
-  diasUteis: number;
-  custoHora: number;
-  jornadaDia: number;
-  hePct: number;
-}) {
-  const { horas, custoFixo, diasUteis, custoHora, jornadaDia, hePct } = args;
-  if (!diasUteis || diasUteis <= 0) {
-    return (custoFixo ?? 0) + horas * custoHora * (1 + hePct / 100);
-  }
-  const horasDia = horas / diasUteis;
-  if (horasDia <= jornadaDia) return horas * custoHora + (custoFixo ?? 0);
-  const normais = jornadaDia * diasUteis;
-  const extras = horas - normais;
-  return (
-    normais * custoHora + extras * custoHora * (1 + hePct / 100) + (custoFixo ?? 0)
-  );
+export function fmtDuration(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
 }
