@@ -112,22 +112,22 @@ export async function renumberStageTemplates(demandTypeId: string) {
     .select("id, ordem")
     .eq("demand_type_id", demandTypeId)
     .order("ordem");
-  if (!tpls || tpls.length === 0) return { ok: true };
+  if (!tpls || tpls.length === 0) return { ok: true as const };
 
-  // Parkear todos em ordem negativa pra evitar conflito de unique
   for (const [i, t] of tpls.entries()) {
-    await supabase
+    const { error } = await supabase
       .from("stage_templates")
       .update({ ordem: -1 * (i + 1) - 1000 })
       .eq("id", t.id);
+    if (error) return { error: error.message };
   }
-  // Aplicar 1..N
   for (const [i, t] of tpls.entries()) {
-    await supabase
+    const { error } = await supabase
       .from("stage_templates")
       .update({ ordem: i + 1 })
       .eq("id", t.id);
+    if (error) return { error: error.message };
   }
   revalidatePath("/demand-types");
-  return { ok: true };
+  return { ok: true as const };
 }
