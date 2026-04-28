@@ -13,6 +13,7 @@ export default async function Page() {
     { data: projects },
     { data: types },
     { data: templates },
+    { data: users },
     { data: costs },
   ] = await Promise.all([
     supabase
@@ -21,6 +22,11 @@ export default async function Page() {
       .order("created_at", { ascending: false }),
     supabase.from("demand_types").select("*").eq("is_active", true).order("nome"),
     supabase.from("stage_templates").select("*").order("ordem"),
+    supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("is_active", true)
+      .order("full_name"),
     supabase.from("v_project_costs").select("*"),
   ]);
 
@@ -35,7 +41,11 @@ export default async function Page() {
             Cada projeto é uma demanda com etapas, datas, responsáveis e custo.
           </p>
         </div>
-        <NewProjectDialog types={types ?? []} templates={templates ?? []} />
+        <NewProjectDialog
+          types={types ?? []}
+          templates={templates ?? []}
+          users={users ?? []}
+        />
       </div>
       <Card>
         <CardContent className="p-0">

@@ -34,6 +34,13 @@ function toISO(d: Date) {
   return `${y}-${m}-${dd}`;
 }
 
+export type CapacityWarning = {
+  user_id: string;
+  full_name: string;
+  jornada: number;
+  days: Array<{ dia: string; horas: number; pct: number }>;
+};
+
 export async function createProject(formData: FormData) {
   const supabase = await createClient();
   const nome = String(formData.get("nome") ?? "").trim();
@@ -45,6 +52,13 @@ export async function createProject(formData: FormData) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const assigneesJson = String(formData.get("assignees") ?? "{}");
+  let assignees: Record<string, string | null> = {};
+  try {
+    assignees = JSON.parse(assigneesJson);
+  } catch {
+    assignees = {};
+  }
 
   if (!nome || !demand_type_id)
     return { error: "Nome e tipo são obrigatórios" };
@@ -56,7 +70,6 @@ export async function createProject(formData: FormData) {
     .single();
   if (error || !project) return { error: error?.message ?? "Erro ao criar" };
 
-  // Pega só as etapas-padrão selecionadas, na ordem original
   const { data: tpls } = await supabase
     .from("stage_templates")
     .select("*")
@@ -68,8 +81,6 @@ export async function createProject(formData: FormData) {
       ? (tpls ?? []).filter((t) => selectedTemplateIds.includes(t.id))
       : (tpls ?? []);
 
-  // Auto-agendamento: 8h/dia, dias úteis, etapas em sequência.
-  // dias = ceil(horas / 8); cada etapa começa no próximo dia útil após a anterior.
   const initialIso = start_date ?? toISO(new Date());
   let cursor = nextBusinessDay(new Date(initialIso + "T00:00:00"));
   const stages = filtered.map((t, idx) => {
@@ -77,7 +88,6 @@ export async function createProject(formData: FormData) {
     const days = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
     const start = new Date(cursor);
     const end = addBusinessDays(start, days);
-    // próxima etapa: próximo dia útil após o fim
     const next = new Date(end);
     next.setDate(next.getDate() + 1);
     cursor = nextBusinessDay(next);
@@ -89,6 +99,7 @@ export async function createProject(formData: FormData) {
       start_date: toISO(start),
       end_date: toISO(end),
       horas_estimadas: horas,
+      assignee_id: assignees[t.id] || null,
       status: "planejado" as const,
       progresso: 0,
     };
@@ -97,7 +108,6 @@ export async function createProject(formData: FormData) {
   if (stages.length > 0) {
     const { error: stErr } = await supabase.from("project_stages").insert(stages);
     if (stErr) return { error: stErr.message };
-    // Atualiza janela do projeto com a data final
     const lastEnd = stages.at(-1)!.end_date;
     await supabase
       .from("projects")
@@ -105,8 +115,144 @@ export async function createProject(formData: FormData) {
       .eq("id", project.id);
   }
 
+  // Checagem de capacidade: detecta dias > 100% jornada para os assignees deste projeto
+  const warnings = await capacityWarningsForProject(supabase, project.id);
+
   revalidatePath("/projects");
-  redirect(`/projects/${project.id}`);
+  return { ok: true, projectId: project.id, warnings };
+}
+
+async function capacityWarningsForProject(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  projectId: string,
+): Promise<CapacityWarning[]> {
+  const { data: ps } = await supabase
+    .from("project_stages")
+    .select("assignee_id")
+    .eq("project_id", projectId)
+    .not("assignee_id", "is", null);
+  const userIds = Array.from(
+    new Set((ps ?? []).map((r: { assignee_id: string }) => r.assignee_id)),
+  );
+  if (userIds.length === 0) return [];
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, full_name, jornada_diaria_h")
+    .in("id", userIds);
+  const profById = new Map(
+    (profiles ?? []).map(
+      (p: { id: string; full_name: string; jornada_diaria_h: number }) => [
+        p.id,
+        p,
+      ],
+    ),
+  );
+
+  const { data: load } = await supabase
+    .from("v_user_daily_planned")
+    .select("*")
+    .in("assignee_id", userIds);
+
+  // Agrupa por usuario: dias com pct >= 100
+  const byUser = new Map<
+    string,
+    { dia: string; horas: number; pct: number }[]
+  >();
+  for (const row of (load ?? []) as Array<{
+    assignee_id: string;
+    dia: string;
+    horas_dia: number;
+  }>) {
+    const prof = profById.get(row.assignee_id) as
+      | { jornada_diaria_h: number }
+      | undefined;
+    const j = Number(prof?.jornada_diaria_h ?? 8);
+    const h = Number(row.horas_dia ?? 0);
+    const pct = j > 0 ? h / j : 0;
+    if (pct >= 1) {
+      const arr = byUser.get(row.assignee_id) ?? [];
+      arr.push({ dia: String(row.dia), horas: h, pct });
+      byUser.set(row.assignee_id, arr);
+    }
+  }
+
+  const out: CapacityWarning[] = [];
+  for (const [userId, days] of byUser) {
+    const prof = profById.get(userId) as
+      | { full_name: string; jornada_diaria_h: number }
+      | undefined;
+    if (!prof) continue;
+    out.push({
+      user_id: userId,
+      full_name: prof.full_name,
+      jornada: Number(prof.jornada_diaria_h),
+      days: days.sort((a, b) => a.dia.localeCompare(b.dia)),
+    });
+  }
+  return out;
+}
+
+export async function rescheduleProjectByCapacity(projectId: string) {
+  const supabase = await createClient();
+  const { data: stages } = await supabase
+    .from("project_stages")
+    .select("id, ordem, start_date, end_date, horas_estimadas, assignee_id")
+    .eq("project_id", projectId)
+    .order("ordem");
+  if (!stages) return { error: "Projeto sem etapas" };
+
+  const userCursors: Record<string, Date> = {};
+  const updates: { id: string; start_date: string; end_date: string }[] = [];
+
+  for (const s of stages) {
+    let startDate = new Date((s.start_date as string) + "T00:00:00");
+    startDate = nextBusinessDay(startDate);
+
+    if (s.assignee_id) {
+      const cursor = userCursors[s.assignee_id as string];
+      if (cursor && cursor > startDate) startDate = new Date(cursor);
+    }
+
+    const horas = Number(s.horas_estimadas ?? 0);
+    const days = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
+    const endDate = addBusinessDays(startDate, days);
+
+    updates.push({
+      id: s.id as string,
+      start_date: toISO(startDate),
+      end_date: toISO(endDate),
+    });
+
+    if (s.assignee_id) {
+      const next = new Date(endDate);
+      next.setDate(next.getDate() + 1);
+      userCursors[s.assignee_id as string] = nextBusinessDay(next);
+    }
+  }
+
+  for (const u of updates) {
+    const { error } = await supabase
+      .from("project_stages")
+      .update({ start_date: u.start_date, end_date: u.end_date })
+      .eq("id", u.id);
+    if (error) return { error: error.message };
+  }
+
+  // Atualiza janela do projeto
+  const lastEnd = updates.at(-1)?.end_date;
+  if (lastEnd) {
+    await supabase
+      .from("projects")
+      .update({ end_date: lastEnd })
+      .eq("id", projectId);
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/gantt");
+  revalidatePath("/calendar");
+  return { ok: true };
 }
 
 export async function updateProject(id: string, formData: FormData) {
