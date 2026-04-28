@@ -22,6 +22,7 @@ import {
 } from "@/app/(app)/projects/actions";
 import { StatusPill, deriveStageStatus } from "@/lib/stage-status";
 import { brl, fmtDuration } from "@/lib/utils";
+import { CascadeDialog, type CascadePromptArgs } from "@/components/cascade-dialog";
 
 type StageInput = ProjectStage & {
   profiles?: { full_name: string } | null;
@@ -34,6 +35,7 @@ type Ctx = {
   stagesById: Map<string, StageInput>;
   realByStage: Map<string, StageRealView>;
   runningByStage: Map<string, TimeEntry>;
+  requestDateChange: (args: CascadePromptArgs) => void;
 };
 
 const GanttCtx = createContext<Ctx | null>(null);
@@ -110,18 +112,23 @@ function EndReadCell({ data }: ColumnProps) {
 function StartCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
   const stage = ctx?.stagesById.get(data.task.id);
-  if (!stage) return null;
+  if (!stage || !ctx) return null;
   return (
     <input
       type="date"
       defaultValue={stage.start_date}
       className="w-[120px] text-xs h-7 rounded border border-input bg-background px-2"
-      onChange={async (e) => {
+      onChange={(e) => {
         const newStart = e.target.value;
-        if (!newStart) return;
-        const end = newStart > stage.end_date ? newStart : stage.end_date;
-        const r = await moveStageDates(stage.id, newStart, end);
-        if (r.error) toast.error(r.error);
+        if (!newStart || newStart === stage.start_date) return;
+        const newEnd = newStart > stage.end_date ? newStart : stage.end_date;
+        ctx.requestDateChange({
+          stageId: stage.id,
+          oldStart: stage.start_date,
+          oldEnd: stage.end_date,
+          newStart,
+          newEnd,
+        });
       }}
     />
   );
@@ -130,21 +137,26 @@ function StartCell({ data }: ColumnProps) {
 function EndCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
   const stage = ctx?.stagesById.get(data.task.id);
-  if (!stage) return null;
+  if (!stage || !ctx) return null;
   return (
     <input
       type="date"
       defaultValue={stage.end_date}
       className="w-[120px] text-xs h-7 rounded border border-input bg-background px-2"
-      onChange={async (e) => {
+      onChange={(e) => {
         const newEnd = e.target.value;
-        if (!newEnd) return;
+        if (!newEnd || newEnd === stage.end_date) return;
         if (newEnd < stage.start_date) {
           toast.error("Fim deve ser ≥ Início");
           return;
         }
-        const r = await moveStageDates(stage.id, stage.start_date, newEnd);
-        if (r.error) toast.error(r.error);
+        ctx.requestDateChange({
+          stageId: stage.id,
+          oldStart: stage.start_date,
+          oldEnd: stage.end_date,
+          newStart: stage.start_date,
+          newEnd,
+        });
       }}
     />
   );
@@ -341,6 +353,7 @@ export default function ProjectGantt({
   const [view, setView] = useState<ViewMode>(
     readOnly ? ViewMode.Week : ViewMode.Day,
   );
+  const [cascadeArgs, setCascadeArgs] = useState<CascadePromptArgs | null>(null);
 
   const ctx: Ctx = useMemo(
     () => ({
@@ -354,6 +367,7 @@ export default function ProjectGantt({
           if (e.ended_at === null && e.user_id === meId) m.set(e.stage_id, e);
         return m;
       })(),
+      requestDateChange: (args) => setCascadeArgs(args),
     }),
     [stages, real, entries, meId, projectId],
   );
@@ -445,6 +459,11 @@ export default function ProjectGantt({
 
   return (
     <GanttCtx.Provider value={ctx}>
+      <CascadeDialog
+        open={!!cascadeArgs}
+        args={cascadeArgs}
+        onClose={() => setCascadeArgs(null)}
+      />
       <div className="grid gap-3">
         <div className="flex gap-2 print:hidden">
           {(

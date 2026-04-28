@@ -207,6 +207,87 @@ export async function moveStageDates(
   return { ok: true };
 }
 
+function diffDays(a: string, b: string) {
+  // calendar days between a and b (b - a)
+  const da = new Date(a + "T00:00:00").getTime();
+  const db = new Date(b + "T00:00:00").getTime();
+  return Math.round((db - da) / 86400000);
+}
+
+function shiftIso(iso: string, days: number) {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return toISO(d);
+}
+
+export type CascadeMode = "self" | "project" | "global";
+
+export async function moveStageDatesCascade(
+  id: string,
+  newStart: string,
+  newEnd: string,
+  mode: CascadeMode,
+) {
+  const supabase = await createClient();
+  const { data: cur } = await supabase
+    .from("project_stages")
+    .select("id, project_id, ordem, start_date, end_date")
+    .eq("id", id)
+    .single();
+  if (!cur) return { error: "Etapa não encontrada" };
+
+  const startDelta = diffDays(cur.start_date as string, newStart);
+
+  // 1) Atualiza a propria etapa
+  const { error: e0 } = await supabase
+    .from("project_stages")
+    .update({ start_date: newStart, end_date: newEnd })
+    .eq("id", id);
+  if (e0) return { error: e0.message };
+
+  if (mode !== "self" && startDelta !== 0) {
+    if (mode === "project") {
+      // todas as etapas do MESMO projeto com ordem > current.ordem
+      const { data: rest } = await supabase
+        .from("project_stages")
+        .select("id, start_date, end_date, ordem")
+        .eq("project_id", cur.project_id)
+        .gt("ordem", cur.ordem as number);
+      for (const s of rest ?? []) {
+        await supabase
+          .from("project_stages")
+          .update({
+            start_date: shiftIso(s.start_date as string, startDelta),
+            end_date: shiftIso(s.end_date as string, startDelta),
+          })
+          .eq("id", s.id);
+      }
+    } else if (mode === "global") {
+      // etapas em qualquer projeto cuja start_date >= start_date original (excluindo a propria)
+      const { data: rest } = await supabase
+        .from("project_stages")
+        .select("id, start_date, end_date")
+        .gte("start_date", cur.start_date as string)
+        .neq("id", id);
+      for (const s of rest ?? []) {
+        await supabase
+          .from("project_stages")
+          .update({
+            start_date: shiftIso(s.start_date as string, startDelta),
+            end_date: shiftIso(s.end_date as string, startDelta),
+          })
+          .eq("id", s.id);
+      }
+    }
+  }
+
+  revalidatePath("/projects");
+  revalidatePath(`/projects/${cur.project_id}`);
+  revalidatePath("/gantt");
+  revalidatePath("/calendar");
+  return { ok: true, delta: startDelta };
+}
+
 // === Time tracking ===
 
 export async function startTimer(stageId: string) {
