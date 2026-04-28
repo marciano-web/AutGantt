@@ -9,6 +9,12 @@ export async function createProject(formData: FormData) {
   const cliente = String(formData.get("cliente") ?? "").trim() || null;
   const demand_type_id = String(formData.get("demand_type_id") ?? "");
   const start_date = String(formData.get("start_date") ?? "") || null;
+  const templateIdsRaw = String(formData.get("template_ids") ?? "");
+  const selectedTemplateIds = templateIdsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   if (!nome || !demand_type_id)
     return { error: "Nome e tipo são obrigatórios" };
 
@@ -19,18 +25,24 @@ export async function createProject(formData: FormData) {
     .single();
   if (error || !project) return { error: error?.message ?? "Erro ao criar" };
 
-  // Copia stage_templates → project_stages SEM datas (usuário define depois)
+  // Pega só as etapas-padrão selecionadas, na ordem original
   const { data: tpls } = await supabase
     .from("stage_templates")
     .select("*")
     .eq("demand_type_id", demand_type_id)
     .order("ordem");
 
+  const filtered =
+    selectedTemplateIds.length > 0
+      ? (tpls ?? []).filter((t) => selectedTemplateIds.includes(t.id))
+      : (tpls ?? []);
+
+  // Renumera 1..N em sequência (mantém ordem original mas reseta os números)
   const placeholder = start_date ?? new Date().toISOString().slice(0, 10);
-  const stages = (tpls ?? []).map((t) => ({
+  const stages = filtered.map((t, idx) => ({
     project_id: project.id,
     stage_template_id: t.id,
-    ordem: t.ordem,
+    ordem: idx + 1,
     nome: t.nome,
     start_date: placeholder,
     end_date: placeholder,

@@ -9,12 +9,18 @@ import { NewProjectDialog } from "./new-project-dialog";
 
 export default async function Page() {
   const supabase = await createClient();
-  const [{ data: projects }, { data: types }, { data: costs }] = await Promise.all([
+  const [
+    { data: projects },
+    { data: types },
+    { data: templates },
+    { data: costs },
+  ] = await Promise.all([
     supabase
       .from("projects")
       .select("*, demand_types(nome)")
       .order("created_at", { ascending: false }),
     supabase.from("demand_types").select("*").eq("is_active", true).order("nome"),
+    supabase.from("stage_templates").select("*").order("ordem"),
     supabase.from("v_project_costs").select("*"),
   ]);
 
@@ -29,7 +35,7 @@ export default async function Page() {
             Cada projeto é uma demanda com etapas, datas, responsáveis e custo.
           </p>
         </div>
-        <NewProjectDialog types={types ?? []} />
+        <NewProjectDialog types={types ?? []} templates={templates ?? []} />
       </div>
       <Card>
         <CardContent className="p-0">
