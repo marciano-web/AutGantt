@@ -443,7 +443,7 @@ function StageDialog({
   defaults?: { ordem?: number; start_date?: string; end_date?: string };
 }) {
   const [open, setOpen] = useState(false);
-  const [assignee, setAssignee] = useState<string>(stage?.assignee_id ?? "");
+  const [assignee, setAssignee] = useState<string>(stage?.assignee_id ?? "none");
   const [status, setStatus] = useState<ProjectStage["status"]>(
     stage?.status ?? "planejado",
   );
@@ -458,7 +458,7 @@ function StageDialog({
         <form
           action={async (fd) => {
             if (stage) fd.set("id", stage.id);
-            fd.set("assignee_id", assignee);
+            fd.set("assignee_id", assignee === "none" ? "" : assignee);
             fd.set("status", status);
             const r = await upsertStage(projectId, fd);
             if (r.error) {
@@ -518,7 +518,7 @@ function StageDialog({
                   <SelectValue placeholder="Sem responsável" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— sem —</SelectItem>
+                  <SelectItem value="none">— sem —</SelectItem>
                   {profiles.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.full_name || p.email}
