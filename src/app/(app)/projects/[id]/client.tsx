@@ -32,6 +32,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { brl, fmtDate, fmtDuration } from "@/lib/utils";
 import { StageTimer } from "@/components/stage-timer";
+import { PrintButton } from "@/components/print-button";
 import {
   deleteProject,
   deleteStage,
@@ -106,7 +107,8 @@ export function ProjectDetailClient({
             {project.cliente ? ` · ${project.cliente}` : ""}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 print:hidden">
+          <PrintButton />
           <EditProjectDialog project={project} />
           <Button
             variant="outline"

@@ -65,3 +65,42 @@ body {
 .gantt-container {
   --gantt-bar-color: hsl(222.2 47.4% 11.2%);
 }
+
+/* Print: A4 paisagem, esconde nav/UI nao essencial */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+  html, body {
+    background: white !important;
+    color: black !important;
+    font-size: 10pt;
+  }
+  aside,
+  [data-sonner-toaster],
+  .print\:hidden {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+  .print-page {
+    page-break-after: always;
+  }
+  .print-page:last-child {
+    page-break-after: auto;
+  }
+  .border, [class*="border-"] {
+    border-color: #ccc !important;
+  }
+  table { font-size: 9pt; }
+  table th { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; }
+  /* Forca cores nas barras do Gantt e badges */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

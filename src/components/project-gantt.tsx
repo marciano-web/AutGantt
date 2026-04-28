@@ -4,8 +4,13 @@ import {
   Gantt,
   Task,
   ViewMode,
+  TitleColumn,
+  DateStartColumn,
+  DateEndColumn,
+  type Column,
 } from "@wamra/gantt-task-react";
 import "@wamra/gantt-task-react/dist/style.css";
+import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
 import type { ProjectStage } from "@/lib/types";
 import { moveStageDates } from "@/app/(app)/projects/actions";
@@ -13,6 +18,21 @@ import { moveStageDates } from "@/app/(app)/projects/actions";
 type StageInput = ProjectStage & {
   profiles?: { full_name: string } | null;
 };
+
+const COLUMNS: readonly Column[] = [
+  { id: "title", Cell: TitleColumn, width: 240, title: "Etapa" },
+  { id: "start", Cell: DateStartColumn, width: 130, title: "Início" },
+  { id: "end", Cell: DateEndColumn, width: 130, title: "Fim" },
+];
+
+const DATE_FORMATS = {
+  dateColumnFormat: "dd/MM/yyyy",
+  dayBottomHeaderFormat: "dd",
+  dayTopHeaderFormat: "MMMM yyyy",
+  hourBottomHeaderFormat: "HH",
+  monthBottomHeaderFormat: "MMM",
+  monthTopHeaderFormat: "yyyy",
+} as const;
 
 export default function ProjectGantt({ stages }: { stages: StageInput[] }) {
   const [view, setView] = useState<ViewMode>(ViewMode.Day);
@@ -45,7 +65,7 @@ export default function ProjectGantt({ stages }: { stages: StageInput[] }) {
 
   return (
     <div className="grid gap-3">
-      <div className="flex gap-2">
+      <div className="flex gap-2 print:hidden">
         {(
           [
             ["Dia", ViewMode.Day],
@@ -68,11 +88,14 @@ export default function ProjectGantt({ stages }: { stages: StageInput[] }) {
         <Gantt
           tasks={tasks}
           viewMode={view}
+          dateLocale={ptBR}
+          dateFormats={DATE_FORMATS}
+          columns={COLUMNS}
           distances={{
             columnWidth:
               view === ViewMode.Month ? 80 : view === ViewMode.Week ? 100 : 50,
             rowHeight: 40,
-            titleCellWidth: 220,
+            titleCellWidth: 240,
           }}
           onDateChange={async (task) => {
             if (task.type !== "task") return;

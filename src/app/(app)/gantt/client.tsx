@@ -5,9 +5,29 @@ import {
   Gantt,
   Task,
   ViewMode,
+  TitleColumn,
+  DateStartColumn,
+  DateEndColumn,
+  type Column,
 } from "@wamra/gantt-task-react";
 import "@wamra/gantt-task-react/dist/style.css";
+import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
+
+const COLUMNS: readonly Column[] = [
+  { id: "title", Cell: TitleColumn, width: 280, title: "Etapa" },
+  { id: "start", Cell: DateStartColumn, width: 130, title: "Início" },
+  { id: "end", Cell: DateEndColumn, width: 130, title: "Fim" },
+];
+
+const DATE_FORMATS = {
+  dateColumnFormat: "dd/MM/yyyy",
+  dayBottomHeaderFormat: "dd",
+  dayTopHeaderFormat: "MMMM yyyy",
+  hourBottomHeaderFormat: "HH",
+  monthBottomHeaderFormat: "MMM",
+  monthTopHeaderFormat: "yyyy",
+} as const;
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { moveStageDates } from "@/app/(app)/projects/actions";
 import type { ProjectStage } from "@/lib/types";
@@ -109,6 +129,9 @@ export function GlobalGanttClient({ stages }: { stages: Row[] }) {
               <Gantt
                 tasks={tasks}
                 viewMode={view}
+                dateLocale={ptBR}
+                dateFormats={DATE_FORMATS}
+                columns={COLUMNS}
                 distances={{
                   columnWidth:
                     view === ViewMode.Month
@@ -117,7 +140,7 @@ export function GlobalGanttClient({ stages }: { stages: Row[] }) {
                         ? 100
                         : 50,
                   rowHeight: 36,
-                  titleCellWidth: 260,
+                  titleCellWidth: 280,
                 }}
                 onDateChange={async (task) => {
                   if (task.type !== "task") return;

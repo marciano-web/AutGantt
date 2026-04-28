@@ -4,14 +4,19 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import ptBrLocale from "@fullcalendar/core/locales/pt-br";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PrintButton } from "@/components/print-button";
 import type { ProjectStage } from "@/lib/types";
 
 type LoadRow = {
   assignee_id: string;
-  stage_id: string;
-  project_id: string;
   dia: string;
   horas_dia: number;
 };
@@ -29,28 +34,49 @@ type StageRow = ProjectStage & {
 
 export function CalendarClient({
   profiles,
-  load,
+  planned,
+  real,
   stages,
 }: {
   profiles: ProfileLite[];
-  load: LoadRow[];
+  planned: LoadRow[];
+  real: LoadRow[];
   stages: StageRow[];
 }) {
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Carga & Calendário</h1>
-        <p className="text-sm text-muted-foreground">
-          Visualização da carga diária por usuário e calendário de etapas.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Carga & Calendário
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Visualização da carga diária por usuário e calendário de etapas.
+          </p>
+        </div>
+        <PrintButton label="Exportar carga (PDF)" />
       </div>
-      <Tabs defaultValue="load">
+      <Tabs defaultValue="planned">
         <TabsList>
-          <TabsTrigger value="load">Carga por usuário</TabsTrigger>
+          <TabsTrigger value="planned">Carga planejada</TabsTrigger>
+          <TabsTrigger value="real">Carga real</TabsTrigger>
           <TabsTrigger value="cal">Calendário</TabsTrigger>
         </TabsList>
-        <TabsContent value="load">
-          <LoadGrid profiles={profiles} load={load} />
+        <TabsContent value="planned">
+          <LoadGrid
+            profiles={profiles}
+            load={planned}
+            title="Carga planejada (h)"
+            description="Horas estimadas ÷ dias úteis da etapa, distribuídas pelos dias entre início e fim."
+          />
+        </TabsContent>
+        <TabsContent value="real">
+          <LoadGrid
+            profiles={profiles}
+            load={real}
+            title="Carga real (h)"
+            description="Horas efetivamente registradas pelos timers (start/stop) de cada etapa."
+          />
         </TabsContent>
         <TabsContent value="cal">
           <Card>
@@ -101,9 +127,13 @@ function statusColor(s: string) {
 function LoadGrid({
   profiles,
   load,
+  title,
+  description,
 }: {
   profiles: ProfileLite[];
   load: LoadRow[];
+  title: string;
+  description: string;
 }) {
   const [weeks, setWeeks] = useState(8);
   const [origin, setOrigin] = useState(() => mondayOf(new Date()));
@@ -136,13 +166,18 @@ function LoadGrid({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
-          <CardTitle className="text-base">Carga diária (h)</CardTitle>
+          <CardTitle className="text-base">{title}</CardTitle>
           <CardDescription>
-            Soma de horas/dia (horas ÷ dias úteis da etapa) por usuário.
-            Verde &lt; 80% jornada · Amarelo 80–100% · Vermelho &gt; 100%.
+            {description}
+            <br />
+            <span className="inline-flex items-center gap-1 text-xs">
+              <Dot color="hsl(142 71% 45% / 0.35)" /> &lt; 75% jornada ·
+              <Dot color="hsl(38 92% 50% / 0.55)" /> 75–99% ·
+              <Dot color="hsl(0 84% 60% / 0.85)" /> ≥ 100%
+            </span>
           </CardDescription>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 print:hidden">
           <button
             className="text-xs px-3 py-1 rounded-md border"
             onClick={() => {
@@ -197,7 +232,7 @@ function LoadGrid({
                 {days.map((d, i) => (
                   <th
                     key={i}
-                    className={`border-b border-border px-1 py-2 text-center min-w-[44px] ${
+                    className={`border-b border-border px-1 py-2 text-center min-w-[52px] ${
                       sameDay(d, new Date()) ? "bg-accent" : ""
                     } ${
                       d.getDay() === 1 && i > 0 ? "border-l border-border" : ""
@@ -206,7 +241,9 @@ function LoadGrid({
                     <div className="text-[10px] text-muted-foreground">
                       {d.toLocaleDateString("pt-BR", { weekday: "short" })}
                     </div>
-                    <div>{d.getDate()}/{d.getMonth() + 1}</div>
+                    <div>
+                      {d.getDate()}/{d.getMonth() + 1}
+                    </div>
                   </th>
                 ))}
                 <th className="sticky right-0 bg-background border-b border-border text-right px-3 py-2 min-w-[80px] z-10">
@@ -235,20 +272,29 @@ function LoadGrid({
                       return (
                         <td
                           key={i}
-                          className={`border-b border-border text-center py-1 ${
-                            d.getDay() === 1 && i > 0 ? "border-l border-border" : ""
+                          className={`border-b border-border text-center py-1 leading-tight ${
+                            d.getDay() === 1 && i > 0
+                              ? "border-l border-border"
+                              : ""
                           }`}
                           style={{
                             background: cellBg(pct, h > 0),
-                            color: pct > 1 ? "white" : undefined,
+                            color: pct >= 1 ? "white" : undefined,
                           }}
                           title={`${h.toFixed(1)} h (${(pct * 100).toFixed(0)}%)`}
                         >
-                          {h > 0 ? h.toFixed(1) : ""}
+                          {h > 0 ? (
+                            <>
+                              <div className="tabular-nums">{h.toFixed(1)}</div>
+                              <div className="text-[10px] opacity-80 tabular-nums">
+                                {(pct * 100).toFixed(0)}%
+                              </div>
+                            </>
+                          ) : null}
                         </td>
                       );
                     })}
-                    <td className="sticky right-0 bg-background border-b border-border text-right px-3 py-1 z-10 font-medium">
+                    <td className="sticky right-0 bg-background border-b border-border text-right px-3 py-1 z-10 font-medium tabular-nums">
                       {total.toFixed(1)}
                     </td>
                   </tr>
@@ -262,11 +308,20 @@ function LoadGrid({
   );
 }
 
+function Dot({ color }: { color: string }) {
+  return (
+    <span
+      className="inline-block w-3 h-3 rounded-sm"
+      style={{ background: color }}
+    />
+  );
+}
+
 function cellBg(pct: number, hasLoad: boolean) {
   if (!hasLoad) return "transparent";
-  if (pct > 1) return "hsl(0 84% 60% / 0.85)";
-  if (pct >= 0.8) return "hsl(38 92% 50% / 0.45)";
-  return "hsl(142 71% 45% / 0.25)";
+  if (pct >= 1) return "hsl(0 84% 60% / 0.85)";
+  if (pct >= 0.75) return "hsl(38 92% 50% / 0.55)";
+  return "hsl(142 71% 45% / 0.35)";
 }
 
 function mondayOf(d: Date) {

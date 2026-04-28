@@ -2,10 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Calendar,
+  FileText,
   GanttChart,
   LayoutDashboard,
   ListChecks,
-  LogOut,
   Settings,
   Users,
 } from "lucide-react";
@@ -17,6 +17,7 @@ const navItems = [
   { href: "/projects", label: "Projetos", icon: ListChecks },
   { href: "/gantt", label: "Gantt", icon: GanttChart },
   { href: "/calendar", label: "Carga", icon: Calendar },
+  { href: "/reports", label: "Relatórios", icon: FileText },
   { href: "/demand-types", label: "Tipos de demanda", icon: Settings },
   { href: "/users", label: "Usuários", icon: Users },
 ];
@@ -40,7 +41,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen w-full">
-      <aside className="w-60 border-r border-border bg-card flex flex-col">
+      <aside className="w-60 border-r border-border bg-card flex flex-col print:hidden">
         <div className="px-5 py-4 border-b border-border">
           <div className="font-semibold tracking-tight">AutGantt</div>
           <div className="text-xs text-muted-foreground">
