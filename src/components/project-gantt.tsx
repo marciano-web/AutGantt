@@ -25,6 +25,7 @@ import { brl, fmtDuration } from "@/lib/utils";
 
 type StageInput = ProjectStage & {
   profiles?: { full_name: string } | null;
+  projects?: { nome: string } | null;
 };
 
 type Ctx = {
@@ -60,6 +61,11 @@ function TitleCell({ data }: ColumnProps) {
     return <div className="px-2 truncate">{(data.task as Task).name}</div>;
   return (
     <div className="px-2 py-1 truncate">
+      {stage.projects?.nome && (
+        <div className="text-[10px] text-muted-foreground truncate">
+          {stage.projects.nome}
+        </div>
+      )}
       <div className="font-medium text-xs truncate">
         {stage.ordem}. {stage.nome}
       </div>
@@ -68,6 +74,28 @@ function TitleCell({ data }: ColumnProps) {
           {stage.profiles.full_name}
         </div>
       )}
+    </div>
+  );
+}
+
+function StartReadCell({ data }: ColumnProps) {
+  const ctx = useContext(GanttCtx);
+  const stage = ctx?.stagesById.get(data.task.id);
+  if (!stage) return null;
+  return (
+    <div className="px-2 text-xs tabular-nums">
+      {new Date(stage.start_date + "T00:00:00").toLocaleDateString("pt-BR")}
+    </div>
+  );
+}
+
+function EndReadCell({ data }: ColumnProps) {
+  const ctx = useContext(GanttCtx);
+  const stage = ctx?.stagesById.get(data.task.id);
+  if (!stage) return null;
+  return (
+    <div className="px-2 text-xs tabular-nums">
+      {new Date(stage.end_date + "T00:00:00").toLocaleDateString("pt-BR")}
     </div>
   );
 }
@@ -253,7 +281,7 @@ function ActionsCell({ data }: ColumnProps) {
   );
 }
 
-const COLUMNS: readonly Column[] = [
+const INTERACTIVE_COLUMNS: readonly Column[] = [
   { id: "title", Cell: TitleCell, width: 220, title: "Etapa" },
   { id: "start", Cell: StartCell, width: 130, title: "Início" },
   { id: "end", Cell: EndCell, width: 130, title: "Fim" },
@@ -263,18 +291,28 @@ const COLUMNS: readonly Column[] = [
   { id: "actions", Cell: ActionsCell, width: 80, title: "" },
 ];
 
+const READONLY_COLUMNS: readonly Column[] = [
+  { id: "title", Cell: TitleCell, width: 240, title: "Etapa" },
+  { id: "start", Cell: StartReadCell, width: 110, title: "Início" },
+  { id: "end", Cell: EndReadCell, width: 110, title: "Fim" },
+  { id: "status", Cell: StatusCell, width: 130, title: "Status" },
+  { id: "cost", Cell: CostCell, width: 100, title: "Custo" },
+];
+
 export default function ProjectGantt({
   stages,
   real = [],
   entries = [],
   meId = "",
   projectId,
+  readOnly = false,
 }: {
   stages: StageInput[];
   real?: StageRealView[];
   entries?: TimeEntry[];
   meId?: string;
   projectId?: string;
+  readOnly?: boolean;
 }) {
   const [view, setView] = useState<ViewMode>(ViewMode.Day);
 
@@ -350,7 +388,7 @@ export default function ProjectGantt({
             viewMode={view}
             dateLocale={ptBR}
             dateFormats={DATE_FORMATS}
-            columns={COLUMNS}
+            columns={readOnly ? READONLY_COLUMNS : INTERACTIVE_COLUMNS}
             distances={{
               columnWidth:
                 view === ViewMode.Month
@@ -359,16 +397,20 @@ export default function ProjectGantt({
                     ? 100
                     : 50,
               rowHeight: 44,
-              titleCellWidth: 220,
+              titleCellWidth: readOnly ? 240 : 220,
             }}
-            onDateChange={async (task) => {
-              if (task.type !== "task") return;
-              const t = task as Task;
-              const start = isoFromDate(t.start);
-              const end = isoFromDate(t.end);
-              const r = await moveStageDates(t.id, start, end);
-              if (r.error) toast.error(r.error);
-            }}
+            onDateChange={
+              readOnly
+                ? undefined
+                : async (task) => {
+                    if (task.type !== "task") return;
+                    const t = task as Task;
+                    const start = isoFromDate(t.start);
+                    const end = isoFromDate(t.end);
+                    const r = await moveStageDates(t.id, start, end);
+                    if (r.error) toast.error(r.error);
+                  }
+            }
           />
         </div>
       </div>

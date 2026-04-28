@@ -161,7 +161,11 @@ export function ReportsClient({
                     <CardTitle className="text-sm">Gantt</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ProjectGantt stages={ps} />
+                    <ProjectGantt
+                      stages={ps}
+                      real={report.real.filter((r) => r.project_id === p.id)}
+                      readOnly
+                    />
                   </CardContent>
                 </Card>
               )}
