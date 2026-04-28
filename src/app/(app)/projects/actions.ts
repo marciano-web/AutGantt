@@ -171,7 +171,8 @@ async function capacityWarningsForProject(
     const j = Number(prof?.jornada_diaria_h ?? 8);
     const h = Number(row.horas_dia ?? 0);
     const pct = j > 0 ? h / j : 0;
-    if (pct >= 1) {
+    // Sobrecarga real: estritamente > 100% (100% cheio mas dentro da jornada nao alerta)
+    if (pct > 1.0001) {
       const arr = byUser.get(row.assignee_id) ?? [];
       arr.push({ dia: String(row.dia), horas: h, pct });
       byUser.set(row.assignee_id, arr);
