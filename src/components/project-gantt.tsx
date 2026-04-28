@@ -309,11 +309,10 @@ const INTERACTIVE_COLUMNS: readonly Column[] = [
 ];
 
 const READONLY_COLUMNS: readonly Column[] = [
-  { id: "title", Cell: TitleCell, width: 240, title: "Etapa" },
-  { id: "start", Cell: StartReadCell, width: 110, title: "Início" },
-  { id: "end", Cell: EndReadCell, width: 110, title: "Fim" },
-  { id: "status", Cell: StatusCell, width: 130, title: "Status" },
-  { id: "cost", Cell: CostCell, width: 100, title: "Custo" },
+  { id: "title", Cell: TitleCell, width: 180, title: "Etapa" },
+  { id: "start", Cell: StartReadCell, width: 80, title: "Início" },
+  { id: "end", Cell: EndReadCell, width: 80, title: "Fim" },
+  { id: "status", Cell: StatusCell, width: 100, title: "Status" },
 ];
 
 export default function ProjectGantt({
@@ -333,7 +332,9 @@ export default function ProjectGantt({
   readOnly?: boolean;
   groupByProject?: boolean;
 }) {
-  const [view, setView] = useState<ViewMode>(ViewMode.Day);
+  const [view, setView] = useState<ViewMode>(
+    readOnly ? ViewMode.Week : ViewMode.Day,
+  );
 
   const ctx: Ctx = useMemo(
     () => ({
@@ -420,6 +421,18 @@ export default function ProjectGantt({
       </div>
     );
 
+  const colWidth = readOnly
+    ? view === ViewMode.Month
+      ? 50
+      : view === ViewMode.Week
+        ? 50
+        : 22
+    : view === ViewMode.Month
+      ? 80
+      : view === ViewMode.Week
+        ? 100
+        : 50;
+
   return (
     <GanttCtx.Provider value={ctx}>
       <div className="grid gap-3">
@@ -444,7 +457,11 @@ export default function ProjectGantt({
             </button>
           ))}
         </div>
-        <div className="border border-border rounded-md overflow-hidden">
+        <div
+          className={`border border-border rounded-md overflow-hidden ${
+            readOnly ? "gantt-print-fit" : ""
+          }`}
+        >
           <Gantt
             tasks={tasks}
             viewMode={view}
@@ -452,14 +469,9 @@ export default function ProjectGantt({
             dateFormats={DATE_FORMATS}
             columns={readOnly ? READONLY_COLUMNS : INTERACTIVE_COLUMNS}
             distances={{
-              columnWidth:
-                view === ViewMode.Month
-                  ? 80
-                  : view === ViewMode.Week
-                    ? 100
-                    : 50,
-              rowHeight: 44,
-              titleCellWidth: readOnly ? 240 : 220,
+              columnWidth: colWidth,
+              rowHeight: readOnly ? 32 : 44,
+              titleCellWidth: readOnly ? 180 : 220,
             }}
             onDateChange={
               readOnly

@@ -98,6 +98,18 @@ body {
   }
   table { font-size: 9pt; }
   table th { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; }
+  /* Gantt readonly no relatorio: scale-down + remove scroll horizontal */
+  .gantt-print-fit {
+    overflow: visible !important;
+    transform: scale(0.7);
+    transform-origin: top left;
+    width: 142.85%; /* compensa o scale */
+    margin-bottom: 6mm;
+  }
+  .gantt-print-fit *,
+  .gantt-print-fit ::-webkit-scrollbar {
+    overflow: visible !important;
+  }
   /* Forca cores nas barras do Gantt e badges */
   * {
     -webkit-print-color-adjust: exact !important;

@@ -1,7 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PrintButton } from "@/components/print-button";
 import type {
   ProjectStage,
   StageRealView,
@@ -30,15 +29,12 @@ export function GlobalGanttClient({
 }) {
   return (
     <div className="grid gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Gantt Geral</h1>
-          <p className="text-sm text-muted-foreground">
-            Todas as etapas de todos os projetos. Edite datas, controle o timer,
-            finalize ou exclua direto da grade.
-          </p>
-        </div>
-        <PrintButton label="Exportar Gantt (PDF)" />
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Gantt Geral</h1>
+        <p className="text-sm text-muted-foreground">
+          Todas as etapas de todos os projetos. Edite datas, controle o timer,
+          finalize ou exclua direto da grade.
+        </p>
       </div>
       <Card>
         <CardHeader>
