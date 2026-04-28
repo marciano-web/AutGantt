@@ -61,3 +61,73 @@ export async function deleteStageTemplate(id: string) {
   revalidatePath("/demand-types");
   return { ok: true };
 }
+
+export async function moveStageTemplate(
+  id: string,
+  direction: "up" | "down",
+) {
+  const supabase = await createClient();
+  const { data: cur } = await supabase
+    .from("stage_templates")
+    .select("id, ordem, demand_type_id")
+    .eq("id", id)
+    .single();
+  if (!cur) return { error: "Etapa não encontrada" };
+
+  const targetOrdem = direction === "up" ? cur.ordem - 1 : cur.ordem + 1;
+  const { data: neighbor } = await supabase
+    .from("stage_templates")
+    .select("id, ordem")
+    .eq("demand_type_id", cur.demand_type_id)
+    .eq("ordem", targetOrdem)
+    .maybeSingle();
+  if (!neighbor) return { ok: true }; // já no limite
+
+  // Swap usando ordem temporariamente negativo para nao violar unique(demand_type_id, ordem)
+  const park = -1 * (cur.ordem + 1000);
+  const { error: e1 } = await supabase
+    .from("stage_templates")
+    .update({ ordem: park })
+    .eq("id", cur.id);
+  if (e1) return { error: e1.message };
+  const { error: e2 } = await supabase
+    .from("stage_templates")
+    .update({ ordem: cur.ordem })
+    .eq("id", neighbor.id);
+  if (e2) return { error: e2.message };
+  const { error: e3 } = await supabase
+    .from("stage_templates")
+    .update({ ordem: targetOrdem })
+    .eq("id", cur.id);
+  if (e3) return { error: e3.message };
+
+  revalidatePath("/demand-types");
+  return { ok: true };
+}
+
+export async function renumberStageTemplates(demandTypeId: string) {
+  const supabase = await createClient();
+  const { data: tpls } = await supabase
+    .from("stage_templates")
+    .select("id, ordem")
+    .eq("demand_type_id", demandTypeId)
+    .order("ordem");
+  if (!tpls || tpls.length === 0) return { ok: true };
+
+  // Parkear todos em ordem negativa pra evitar conflito de unique
+  for (const [i, t] of tpls.entries()) {
+    await supabase
+      .from("stage_templates")
+      .update({ ordem: -1 * (i + 1) - 1000 })
+      .eq("id", t.id);
+  }
+  // Aplicar 1..N
+  for (const [i, t] of tpls.entries()) {
+    await supabase
+      .from("stage_templates")
+      .update({ ordem: i + 1 })
+      .eq("id", t.id);
+  }
+  revalidatePath("/demand-types");
+  return { ok: true };
+}

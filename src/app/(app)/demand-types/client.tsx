@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ListOrdered, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,8 @@ import {
   createDemandType,
   deleteDemandType,
   deleteStageTemplate,
+  moveStageTemplate,
+  renumberStageTemplates,
   updateDemandType,
   upsertStageTemplate,
 } from "./actions";
@@ -97,6 +99,20 @@ export function DemandTypesClient({
               <div className="flex gap-2">
                 <EditTypeDialog type={selectedType} />
                 <DeleteTypeButton id={selectedType.id} />
+                {myTemplates.length > 1 && (
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    title="Renumerar etapas em sequência"
+                    onClick={async () => {
+                      const r = await renumberStageTemplates(selectedType.id);
+                      if (r.error) toast.error(r.error);
+                      else toast.success("Etapas renumeradas");
+                    }}
+                  >
+                    <ListOrdered className="h-4 w-4" />
+                  </Button>
+                )}
                 <NewTemplateDialog
                   demandTypeId={selectedType.id}
                   nextOrdem={(myTemplates.at(-1)?.ordem ?? 0) + 1}
@@ -120,14 +136,38 @@ export function DemandTypesClient({
                   </TR>
                 </THead>
                 <TBody>
-                  {myTemplates.map((t) => (
+                  {myTemplates.map((t, idx) => (
                     <TR key={t.id}>
                       <TD className="w-12">{t.ordem}</TD>
                       <TD className="font-medium">{t.nome}</TD>
                       <TD className="text-right">{Number(t.horas_default).toFixed(1)}</TD>
                       {isAdmin && (
-                        <TD className="text-right w-24">
+                        <TD className="text-right w-40">
                           <div className="flex justify-end gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              disabled={idx === 0}
+                              title="Mover para cima"
+                              onClick={async () => {
+                                const r = await moveStageTemplate(t.id, "up");
+                                if (r.error) toast.error(r.error);
+                              }}
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              disabled={idx === myTemplates.length - 1}
+                              title="Mover para baixo"
+                              onClick={async () => {
+                                const r = await moveStageTemplate(t.id, "down");
+                                if (r.error) toast.error(r.error);
+                              }}
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
                             <EditTemplateDialog template={t} />
                             <Button
                               size="icon"
