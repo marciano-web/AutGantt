@@ -362,7 +362,7 @@ export default function ProjectGantt({
     if (!groupByProject) {
       return stages.map((s) => ({
         id: s.id,
-        name: "",
+        name: `${s.ordem}. ${s.nome}`,
         start: new Date(s.start_date + "T00:00:00"),
         end: new Date(s.end_date + "T23:59:59"),
         progress: s.progresso ?? 0,
@@ -372,6 +372,8 @@ export default function ProjectGantt({
           barBackgroundSelectedColor: barColor(s.status),
           barProgressColor: progressColor(s.status),
           barProgressSelectedColor: progressColor(s.status),
+          barLabelColor: "transparent",
+          barLabelWhenOutsideColor: "transparent",
         },
       }));
     }
@@ -402,7 +404,7 @@ export default function ProjectGantt({
       for (const s of items) {
         out.push({
           id: s.id,
-          name: "",
+          name: `${s.ordem}. ${s.nome}`,
           start: new Date(s.start_date + "T00:00:00"),
           end: new Date(s.end_date + "T23:59:59"),
           progress: s.progresso ?? 0,
@@ -413,6 +415,8 @@ export default function ProjectGantt({
             barBackgroundSelectedColor: barColor(s.status),
             barProgressColor: progressColor(s.status),
             barProgressSelectedColor: progressColor(s.status),
+            barLabelColor: "transparent",
+            barLabelWhenOutsideColor: "transparent",
           },
         });
       }
@@ -476,8 +480,6 @@ export default function ProjectGantt({
             checkIsHoliday={checkIsMonthStart}
             colors={{
               holidayBackgroundColor: "rgba(99, 102, 241, 0.18)",
-              barLabelColor: "transparent",
-              barLabelWhenOutsideColor: "transparent",
             }}
             columns={readOnly ? READONLY_COLUMNS : INTERACTIVE_COLUMNS}
             distances={{
