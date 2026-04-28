@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AutGantt
 
-## Getting Started
+Planejador visual de demandas: cadastro de tipos de demanda com etapas-padrão, projetos com Gantt clássico, custo por etapa (incluindo hora extra) e visualização da carga diária por usuário.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Next.js 16** (App Router, RSC, Server Actions, Turbopack)
+- **TypeScript** + **Tailwind CSS v4**
+- **Supabase** (Postgres + Auth + RLS)
+- **@wamra/gantt-task-react** — Gantt chart
+- **FullCalendar** — calendário mensal
+- **Radix UI primitives** (Dialog, Select, Tabs, Label, Slot, Dropdown)
+
+## Modelo de custo
+
+Para cada etapa:
+
+```
+horas_dia_média = horas_estimadas / dias_úteis_da_etapa
+
+se horas_dia_média ≤ jornada_diária:
+    custo = horas × custo_hora + custo_fixo
+senão:
+    horas_normais = jornada × dias_úteis
+    horas_extras  = horas_estimadas − horas_normais
+    custo = horas_normais × custo_hora
+          + horas_extras  × custo_hora × (1 + adicional_he%/100)
+          + custo_fixo
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Custo do projeto = soma dos custos das etapas (recalculado por trigger no banco).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Setup local
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install --legacy-peer-deps
+cp .env.example .env.local   # preenche NEXT_PUBLIC_SUPABASE_URL e ANON_KEY
+npm run dev
+```
 
-## Learn More
+O **primeiro usuário** que se cadastrar pela tela de login vira `admin` automaticamente. Em seguida, esse admin pode editar custo/jornada/HE de qualquer usuário e cadastrar tipos de demanda.
 
-To learn more about Next.js, take a look at the following resources:
+## Deploy (Railway)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. **Connect** o repo `marciano-web/AutGantt` no Railway.
+2. Em **Variables**, adicione:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+3. O Railway lê o `railway.json` deste repo e usa Nixpacks para build (`npm ci && npm run build`) e start (`npm run start` na porta `$PORT`).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Estrutura
 
-## Deploy on Vercel
+```
+src/
+├── app/
+│   ├── (app)/                 # rotas autenticadas com sidebar
+│   │   ├── page.tsx           # dashboard
+│   │   ├── projects/          # lista, criar, detalhe (Gantt embutido)
+│   │   ├── gantt/             # Gantt geral (todos os projetos)
+│   │   ├── calendar/          # carga + calendário
+│   │   ├── demand-types/      # tipos + etapas-padrão (admin)
+│   │   └── users/             # custo_hora / jornada / HE%
+│   ├── login/
+│   └── layout.tsx
+├── components/
+│   ├── ui/                    # primitives (button, card, dialog, ...)
+│   └── project-gantt.tsx
+├── lib/
+│   ├── supabase/              # browser, server, middleware clients
+│   ├── types.ts               # tipos do domínio
+│   └── utils.ts               # cn, brl, businessDays, computeStageCost
+└── middleware.ts              # auth gate
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Schema (resumo)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `profiles` — extends `auth.users`. Campos: `custo_hora`, `jornada_diaria_h`, `adicional_he_pct`, `role`.
+- `demand_types` — tipo de demanda.
+- `stage_templates` — etapas-padrão de cada tipo.
+- `projects` — uma demanda concreta.
+- `project_stages` — etapas do projeto (datas, assignee, horas, custo). `custo_calc` é recalculado por trigger.
+- `v_project_costs` — custo total e horas totais por projeto.
+- `v_user_daily_load` — distribuição diária de horas por usuário (alimenta a view de carga).
+
+## RLS
+
+- Todos autenticados leem todas as tabelas.
+- `demand_types` e `stage_templates`: somente admins escrevem.
+- `profiles`: cada usuário edita o próprio; admins editam todos.
+- `projects` e `project_stages`: qualquer autenticado cria/edita.
