@@ -195,6 +195,10 @@ async function capacityWarningsForProject(
   return out;
 }
 
+function intervalsOverlap(a1: Date, a2: Date, b1: Date, b2: Date) {
+  return a1.getTime() <= b2.getTime() && b1.getTime() <= a2.getTime();
+}
+
 export async function rescheduleProjectByCapacity(projectId: string) {
   const supabase = await createClient();
   const { data: stages } = await supabase
@@ -204,32 +208,89 @@ export async function rescheduleProjectByCapacity(projectId: string) {
     .order("ordem");
   if (!stages) return { error: "Projeto sem etapas" };
 
+  // Coleta usuários atribuídos neste projeto
+  const userIds = Array.from(
+    new Set(
+      stages
+        .map((s) => s.assignee_id as string | null)
+        .filter((x): x is string => !!x),
+    ),
+  );
+
+  // Busca etapas DESSES usuários em OUTROS projetos (que continuam fixas)
+  const occupied: Record<string, { start: Date; end: Date }[]> = {};
+  if (userIds.length > 0) {
+    const { data: other } = await supabase
+      .from("project_stages")
+      .select("assignee_id, start_date, end_date, project_id")
+      .in("assignee_id", userIds)
+      .neq("project_id", projectId);
+    for (const o of other ?? []) {
+      const uid = o.assignee_id as string;
+      if (!occupied[uid]) occupied[uid] = [];
+      occupied[uid].push({
+        start: new Date((o.start_date as string) + "T00:00:00"),
+        end: new Date((o.end_date as string) + "T00:00:00"),
+      });
+    }
+    for (const uid of userIds) {
+      if (occupied[uid])
+        occupied[uid].sort((a, b) => a.start.getTime() - b.start.getTime());
+    }
+  }
+
   const userCursors: Record<string, Date> = {};
   const updates: { id: string; start_date: string; end_date: string }[] = [];
 
   for (const s of stages) {
-    let startDate = new Date((s.start_date as string) + "T00:00:00");
-    startDate = nextBusinessDay(startDate);
-
-    if (s.assignee_id) {
-      const cursor = userCursors[s.assignee_id as string];
-      if (cursor && cursor > startDate) startDate = new Date(cursor);
-    }
+    let startDate = nextBusinessDay(
+      new Date((s.start_date as string) + "T00:00:00"),
+    );
 
     const horas = Number(s.horas_estimadas ?? 0);
     const days = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
-    const endDate = addBusinessDays(startDate, days);
-
-    updates.push({
-      id: s.id as string,
-      start_date: toISO(startDate),
-      end_date: toISO(endDate),
-    });
 
     if (s.assignee_id) {
+      const uid = s.assignee_id as string;
+      // (1) cursor: serialização dentro deste projeto
+      const cursor = userCursors[uid];
+      if (cursor && cursor > startDate) startDate = new Date(cursor);
+
+      // (2) avança sobre intervalos ocupados por outros projetos do mesmo usuário
+      // re-checa em loop pq advance pode cair em outro intervalo
+      while (true) {
+        const tentativeEnd = addBusinessDays(startDate, days);
+        const conflict = (occupied[uid] ?? []).find((b) =>
+          intervalsOverlap(startDate, tentativeEnd, b.start, b.end),
+        );
+        if (!conflict) break;
+        const after = new Date(conflict.end);
+        after.setDate(after.getDate() + 1);
+        startDate = nextBusinessDay(after);
+      }
+
+      const endDate = addBusinessDays(startDate, days);
+      updates.push({
+        id: s.id as string,
+        start_date: toISO(startDate),
+        end_date: toISO(endDate),
+      });
+
+      // adiciona aos ocupados pra próximas etapas do mesmo user neste projeto também respeitarem
+      occupied[uid] = occupied[uid] ?? [];
+      occupied[uid].push({ start: new Date(startDate), end: new Date(endDate) });
+      occupied[uid].sort((a, b) => a.start.getTime() - b.start.getTime());
+
       const next = new Date(endDate);
       next.setDate(next.getDate() + 1);
-      userCursors[s.assignee_id as string] = nextBusinessDay(next);
+      userCursors[uid] = nextBusinessDay(next);
+    } else {
+      // sem assignee: mantém datas atuais
+      updates.push({
+        id: s.id as string,
+        start_date: s.start_date as string,
+        end_date: s.end_date as string,
+      });
     }
   }
 
@@ -241,16 +302,22 @@ export async function rescheduleProjectByCapacity(projectId: string) {
     if (error) return { error: error.message };
   }
 
-  // Atualiza janela do projeto
-  const lastEnd = updates.at(-1)?.end_date;
-  if (lastEnd) {
+  // janela do projeto = (min start, max end)
+  let minStart = updates[0]?.start_date;
+  let maxEnd = updates[0]?.end_date;
+  for (const u of updates) {
+    if (u.start_date < minStart) minStart = u.start_date;
+    if (u.end_date > maxEnd) maxEnd = u.end_date;
+  }
+  if (minStart && maxEnd) {
     await supabase
       .from("projects")
-      .update({ end_date: lastEnd })
+      .update({ start_date: minStart, end_date: maxEnd })
       .eq("id", projectId);
   }
 
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/projects");
   revalidatePath("/gantt");
   revalidatePath("/calendar");
   return { ok: true };
