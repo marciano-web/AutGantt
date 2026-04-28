@@ -189,6 +189,70 @@ export async function stopTimer(stageId: string) {
   return { ok: true };
 }
 
+export async function finalizeStage(stageId: string, projectId: string) {
+  const supabase = await createClient();
+  // Para qualquer timer rodando nesta etapa antes de finalizar
+  await supabase
+    .from("time_entries")
+    .update({ ended_at: new Date().toISOString() })
+    .eq("stage_id", stageId)
+    .is("ended_at", null);
+
+  const { error } = await supabase
+    .from("project_stages")
+    .update({ status: "concluido", progresso: 100 })
+    .eq("id", stageId);
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/gantt");
+  revalidatePath("/calendar");
+  return { ok: true };
+}
+
+export async function reopenStage(stageId: string, projectId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("project_stages")
+    .update({ status: "em_andamento" })
+    .eq("id", stageId);
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}`);
+  return { ok: true };
+}
+
+export async function finalizeProject(projectId: string) {
+  const supabase = await createClient();
+  // Encerra qualquer timer rodando em etapas deste projeto
+  const { data: stagesIds } = await supabase
+    .from("project_stages")
+    .select("id")
+    .eq("project_id", projectId);
+  if (stagesIds && stagesIds.length > 0) {
+    await supabase
+      .from("time_entries")
+      .update({ ended_at: new Date().toISOString() })
+      .in(
+        "stage_id",
+        stagesIds.map((s) => s.id),
+      )
+      .is("ended_at", null);
+  }
+  await supabase
+    .from("project_stages")
+    .update({ status: "concluido" })
+    .eq("project_id", projectId)
+    .not("status", "in", "(concluido,cancelado)");
+  const { error } = await supabase
+    .from("projects")
+    .update({ status: "concluido" })
+    .eq("id", projectId);
+  if (error) return { error: error.message };
+  revalidatePath(`/projects/${projectId}`);
+  revalidatePath("/projects");
+  revalidatePath("/gantt");
+  return { ok: true };
+}
+
 export async function deleteTimeEntry(entryId: string) {
   const supabase = await createClient();
   const { error } = await supabase

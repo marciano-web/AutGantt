@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Pencil, Plus, Trash2, Clock } from "lucide-react";
+import { CheckCircle2, Pencil, Plus, RotateCcw, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,9 +37,13 @@ import {
   deleteProject,
   deleteStage,
   deleteTimeEntry,
+  finalizeProject,
+  finalizeStage,
+  reopenStage,
   updateProject,
   upsertStage,
 } from "../actions";
+import { StatusPill, deriveStageStatus } from "@/lib/stage-status";
 import type {
   Profile,
   Project,
@@ -110,6 +114,25 @@ export function ProjectDetailClient({
         <div className="flex gap-2 print:hidden">
           <PrintButton />
           <EditProjectDialog project={project} />
+          {project.status !== "concluido" && project.status !== "cancelado" && (
+            <Button
+              variant="default"
+              onClick={async () => {
+                if (
+                  !confirm(
+                    "Finalizar este projeto? Todas as etapas em aberto serão marcadas como concluídas e timers em execução serão parados.",
+                  )
+                )
+                  return;
+                const r = await finalizeProject(project.id);
+                if (r.error) toast.error(r.error);
+                else toast.success("Projeto finalizado");
+              }}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Finalizar projeto
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={async () => {
@@ -176,6 +199,7 @@ export function ProjectDetailClient({
                     <TH>Etapa</TH>
                     <TH>Responsável</TH>
                     <TH>Datas</TH>
+                    <TH>Status</TH>
                     <TH className="text-right">Horas est.</TH>
                     <TH>Timer</TH>
                     <TH className="text-right">Custo real</TH>
@@ -186,7 +210,7 @@ export function ProjectDetailClient({
                   {stages.length === 0 && (
                     <TR>
                       <TD
-                        colSpan={8}
+                        colSpan={9}
                         className="text-center py-8 text-muted-foreground"
                       >
                         Sem etapas. Crie tipos de demanda com etapas-padrão
@@ -198,6 +222,12 @@ export function ProjectDetailClient({
                     const r = realByStage.get(s.id);
                     const isMe = s.assignee_id === meId;
                     const running = runningByStage.get(s.id);
+                    const derived = deriveStageStatus(
+                      s,
+                      Number(r?.horas_reais ?? 0) > 0,
+                    );
+                    const isDone =
+                      s.status === "concluido" || s.status === "cancelado";
                     return (
                       <TR key={s.id}>
                         <TD className="w-12">{s.ordem}</TD>
@@ -206,6 +236,9 @@ export function ProjectDetailClient({
                         <TD className="whitespace-nowrap text-xs">
                           {fmtDate(s.start_date)} →{" "}
                           {fmtDate(s.end_date)}
+                        </TD>
+                        <TD>
+                          <StatusPill status={derived} />
                         </TD>
                         <TD className="text-right">
                           {Number(s.horas_estimadas).toFixed(1)}
@@ -228,8 +261,42 @@ export function ProjectDetailClient({
                         <TD className="text-right font-medium">
                           {brl(r?.custo_real ?? 0)}
                         </TD>
-                        <TD className="text-right w-24">
+                        <TD className="text-right w-32">
                           <div className="flex justify-end gap-1">
+                            {!isDone ? (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Finalizar etapa"
+                                onClick={async () => {
+                                  if (!confirm("Finalizar essa etapa?")) return;
+                                  const res = await finalizeStage(
+                                    s.id,
+                                    project.id,
+                                  );
+                                  if (res.error) toast.error(res.error);
+                                  else toast.success("Etapa finalizada");
+                                }}
+                              >
+                                <CheckCircle2 className="h-4 w-4 text-success" />
+                              </Button>
+                            ) : (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                title="Reabrir etapa"
+                                onClick={async () => {
+                                  const res = await reopenStage(
+                                    s.id,
+                                    project.id,
+                                  );
+                                  if (res.error) toast.error(res.error);
+                                  else toast.success("Etapa reaberta");
+                                }}
+                              >
+                                <RotateCcw className="h-4 w-4" />
+                              </Button>
+                            )}
                             <StageDialog
                               projectId={project.id}
                               profiles={profiles}
@@ -349,7 +416,13 @@ export function ProjectDetailClient({
         <TabsContent value="gantt">
           <Card>
             <CardContent className="pt-6">
-              <ProjectGantt stages={stages} />
+              <ProjectGantt
+                stages={stages}
+                real={real}
+                entries={entries}
+                meId={meId}
+                projectId={project.id}
+              />
             </CardContent>
           </Card>
         </TabsContent>
