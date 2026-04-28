@@ -187,8 +187,9 @@ export function NewProjectDialog({
                 </div>
               )}
               <p className="text-[10px] text-muted-foreground">
-                As etapas selecionadas serão renumeradas em sequência (1, 2,
-                3...) no projeto.
+                Etapas renumeradas 1..N e agendadas em sequência considerando
+                <strong> 8h/dia</strong> e <strong>dias úteis</strong> (você
+                pode ajustar manualmente depois).
               </p>
             </div>
           )}

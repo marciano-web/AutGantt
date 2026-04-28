@@ -3,6 +3,37 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+const HOURS_PER_DAY = 8;
+
+function isWeekend(d: Date) {
+  const dow = d.getDay();
+  return dow === 0 || dow === 6;
+}
+
+function nextBusinessDay(d: Date) {
+  const r = new Date(d);
+  while (isWeekend(r)) r.setDate(r.getDate() + 1);
+  return r;
+}
+
+function addBusinessDays(start: Date, count: number) {
+  const r = new Date(start);
+  while (isWeekend(r)) r.setDate(r.getDate() + 1);
+  let added = 0;
+  while (added < count - 1) {
+    r.setDate(r.getDate() + 1);
+    if (!isWeekend(r)) added++;
+  }
+  return r;
+}
+
+function toISO(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
 export async function createProject(formData: FormData) {
   const supabase = await createClient();
   const nome = String(formData.get("nome") ?? "").trim();
@@ -37,23 +68,41 @@ export async function createProject(formData: FormData) {
       ? (tpls ?? []).filter((t) => selectedTemplateIds.includes(t.id))
       : (tpls ?? []);
 
-  // Renumera 1..N em sequência (mantém ordem original mas reseta os números)
-  const placeholder = start_date ?? new Date().toISOString().slice(0, 10);
-  const stages = filtered.map((t, idx) => ({
-    project_id: project.id,
-    stage_template_id: t.id,
-    ordem: idx + 1,
-    nome: t.nome,
-    start_date: placeholder,
-    end_date: placeholder,
-    horas_estimadas: t.horas_default,
-    status: "planejado" as const,
-    progresso: 0,
-  }));
+  // Auto-agendamento: 8h/dia, dias úteis, etapas em sequência.
+  // dias = ceil(horas / 8); cada etapa começa no próximo dia útil após a anterior.
+  const initialIso = start_date ?? toISO(new Date());
+  let cursor = nextBusinessDay(new Date(initialIso + "T00:00:00"));
+  const stages = filtered.map((t, idx) => {
+    const horas = Number(t.horas_default ?? 0);
+    const days = Math.max(1, Math.ceil(horas / HOURS_PER_DAY));
+    const start = new Date(cursor);
+    const end = addBusinessDays(start, days);
+    // próxima etapa: próximo dia útil após o fim
+    const next = new Date(end);
+    next.setDate(next.getDate() + 1);
+    cursor = nextBusinessDay(next);
+    return {
+      project_id: project.id,
+      stage_template_id: t.id,
+      ordem: idx + 1,
+      nome: t.nome,
+      start_date: toISO(start),
+      end_date: toISO(end),
+      horas_estimadas: horas,
+      status: "planejado" as const,
+      progresso: 0,
+    };
+  });
 
   if (stages.length > 0) {
     const { error: stErr } = await supabase.from("project_stages").insert(stages);
     if (stErr) return { error: stErr.message };
+    // Atualiza janela do projeto com a data final
+    const lastEnd = stages.at(-1)!.end_date;
+    await supabase
+      .from("projects")
+      .update({ end_date: lastEnd })
+      .eq("id", project.id);
   }
 
   revalidatePath("/projects");
