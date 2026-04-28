@@ -66,6 +66,12 @@ body {
   --gantt-bar-color: hsl(222.2 47.4% 11.2%);
 }
 
+/* wamra: capitaliza primeira letra do top-header (mes em pt-BR vem em minuscula) */
+.gantt-container svg text,
+.gantt-container .calendar text {
+  text-transform: capitalize;
+}
+
 /* Print: A4 paisagem, esconde nav/UI nao essencial */
 @media print {
   @page {

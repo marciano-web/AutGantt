@@ -41,11 +41,17 @@ const GanttCtx = createContext<Ctx | null>(null);
 const DATE_FORMATS = {
   dateColumnFormat: "dd/MM/yyyy",
   dayBottomHeaderFormat: "dd",
-  dayTopHeaderFormat: "MMMM yyyy",
+  dayTopHeaderFormat: "dd",
   hourBottomHeaderFormat: "HH",
   monthBottomHeaderFormat: "MMM",
-  monthTopHeaderFormat: "yyyy",
+  // Em Day view, o top header usa monthTopHeaderFormat (capitalizado pelo CSS)
+  monthTopHeaderFormat: "MMMM yyyy",
 } as const;
+
+// Tinge a 1ª coluna de cada mês para destacar a transição (em qualquer view)
+function checkIsMonthStart(date: Date) {
+  return date.getDate() === 1;
+}
 
 function isoFromDate(d: Date) {
   const y = d.getFullYear();
@@ -356,7 +362,7 @@ export default function ProjectGantt({
     if (!groupByProject) {
       return stages.map((s) => ({
         id: s.id,
-        name: `${s.ordem}. ${s.nome}`,
+        name: "",
         start: new Date(s.start_date + "T00:00:00"),
         end: new Date(s.end_date + "T23:59:59"),
         progress: s.progresso ?? 0,
@@ -396,7 +402,7 @@ export default function ProjectGantt({
       for (const s of items) {
         out.push({
           id: s.id,
-          name: `${s.ordem}. ${s.nome}`,
+          name: "",
           start: new Date(s.start_date + "T00:00:00"),
           end: new Date(s.end_date + "T23:59:59"),
           progress: s.progresso ?? 0,
@@ -467,6 +473,12 @@ export default function ProjectGantt({
             viewMode={view}
             dateLocale={ptBR}
             dateFormats={DATE_FORMATS}
+            checkIsHoliday={checkIsMonthStart}
+            colors={{
+              holidayBackgroundColor: "rgba(99, 102, 241, 0.18)",
+              barLabelColor: "transparent",
+              barLabelWhenOutsideColor: "transparent",
+            }}
             columns={readOnly ? READONLY_COLUMNS : INTERACTIVE_COLUMNS}
             distances={{
               columnWidth: colWidth,
