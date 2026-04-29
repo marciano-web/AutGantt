@@ -115,6 +115,7 @@ function StartCell({ data }: ColumnProps) {
   if (!stage || !ctx) return null;
   return (
     <input
+      key={`s:${stage.start_date}`}
       type="date"
       defaultValue={stage.start_date}
       className="w-[120px] text-xs h-7 rounded border border-input bg-background px-2"
@@ -140,6 +141,7 @@ function EndCell({ data }: ColumnProps) {
   if (!stage || !ctx) return null;
   return (
     <input
+      key={`e:${stage.end_date}`}
       type="date"
       defaultValue={stage.end_date}
       className="w-[120px] text-xs h-7 rounded border border-input bg-background px-2"
@@ -445,6 +447,15 @@ export default function ProjectGantt({
       </div>
     );
 
+  // Chave que muda quando alguma data muda → força wamra a refletir
+  const stagesKey = useMemo(
+    () =>
+      stages
+        .map((s) => `${s.id}:${s.start_date}:${s.end_date}:${s.assignee_id ?? "_"}`)
+        .join("|"),
+    [stages],
+  );
+
   const colWidth = readOnly
     ? view === ViewMode.Month
       ? 50
@@ -492,6 +503,7 @@ export default function ProjectGantt({
           }`}
         >
           <Gantt
+            key={stagesKey}
             tasks={tasks}
             viewMode={view}
             dateLocale={ptBR}
