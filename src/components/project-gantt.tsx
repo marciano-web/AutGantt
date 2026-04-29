@@ -130,6 +130,7 @@ function StartCell({ data }: ColumnProps) {
           oldEnd: stage.end_date,
           newStart,
           newEnd,
+          horasEstimadas: Number(stage.horas_estimadas ?? 0),
         });
       }}
     />
@@ -159,6 +160,7 @@ function EndCell({ data }: ColumnProps) {
           oldEnd: stage.end_date,
           newStart: stage.start_date,
           newEnd,
+          horasEstimadas: Number(stage.horas_estimadas ?? 0),
         });
       }}
     />

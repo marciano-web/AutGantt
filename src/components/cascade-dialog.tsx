@@ -23,7 +23,24 @@ export type CascadePromptArgs = {
   oldEnd: string;
   newStart: string;
   newEnd: string;
+  horasEstimadas: number;
 };
+
+const HOURS_PER_DAY = 8;
+
+function countBusinessDays(start: string, end: string): number {
+  const s = new Date(start + "T00:00:00");
+  const e = new Date(end + "T00:00:00");
+  if (e < s) return 0;
+  let count = 0;
+  const cur = new Date(s);
+  while (cur <= e) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
 
 export function CascadeDialog({
   open,
@@ -35,16 +52,19 @@ export function CascadeDialog({
   onClose: () => void;
 }) {
   const [pending, setPending] = useState<CascadeMode | null>(null);
+  const [adjustHours, setAdjustHours] = useState(false);
   const router = useRouter();
 
   async function apply(mode: CascadeMode) {
     if (!args) return;
     setPending(mode);
+    const adjustTo = adjustHours ? suggestedHoras : undefined;
     const r = await moveStageDatesCascade(
       args.stageId,
       args.newStart,
       args.newEnd,
       mode,
+      adjustTo,
     );
     setPending(null);
     if (r.error) {
@@ -58,6 +78,12 @@ export function CascadeDialog({
     router.refresh();
     onClose();
   }
+
+  const newDays = args ? countBusinessDays(args.newStart, args.newEnd) : 0;
+  const dailyLoad =
+    args && newDays > 0 ? args.horasEstimadas / newDays : 0;
+  const showHoursOption = !!args && dailyLoad > HOURS_PER_DAY + 0.0001;
+  const suggestedHoras = newDays * HOURS_PER_DAY;
 
   if (!open || !args) return null;
   const deltaDays = Math.round(
@@ -82,6 +108,31 @@ export function CascadeDialog({
             </span>{" "}
             ({deltaSign}{deltaDays} dias)
           </div>
+          {showHoursOption && (
+            <div className="border border-warn/40 bg-warn/10 rounded-md p-3 mb-3">
+              <div className="text-sm">
+                <strong>Carga ficou alta:</strong>{" "}
+                {args.horasEstimadas.toFixed(1)}h em {newDays} dia(s) úteis ={" "}
+                <span className="font-medium">{dailyLoad.toFixed(1)}h/dia</span>{" "}
+                (passa da jornada de {HOURS_PER_DAY}h).
+              </div>
+              <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={adjustHours}
+                  onChange={(e) => setAdjustHours(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span>
+                  Reduzir <strong>horas estimadas</strong> para{" "}
+                  <span className="font-mono">
+                    {suggestedHoras}h
+                  </span>{" "}
+                  (mantém {HOURS_PER_DAY}h/dia)
+                </span>
+              </label>
+            </div>
+          )}
         </div>
         <div className="grid gap-2">
           <Button

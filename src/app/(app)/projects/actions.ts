@@ -538,6 +538,7 @@ export async function moveStageDatesCascade(
   newStart: string,
   newEnd: string,
   mode: CascadeMode,
+  adjustHoursTo?: number,
 ) {
   const supabase = await createClient();
   const { data: cur } = await supabase
@@ -549,10 +550,17 @@ export async function moveStageDatesCascade(
 
   const startDelta = diffDays(cur.start_date as string, newStart);
 
-  // 1) Atualiza a propria etapa
+  // 1) Atualiza a propria etapa (datas + opcionalmente horas)
+  const updatePayload: { start_date: string; end_date: string; horas_estimadas?: number } = {
+    start_date: newStart,
+    end_date: newEnd,
+  };
+  if (typeof adjustHoursTo === "number" && adjustHoursTo >= 0) {
+    updatePayload.horas_estimadas = adjustHoursTo;
+  }
   const { error: e0 } = await supabase
     .from("project_stages")
-    .update({ start_date: newStart, end_date: newEnd })
+    .update(updatePayload)
     .eq("id", id);
   if (e0) return { error: e0.message };
 
