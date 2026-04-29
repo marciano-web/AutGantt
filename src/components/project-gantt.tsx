@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Gantt,
   Task,
@@ -179,6 +180,7 @@ function StatusCell({ data }: ColumnProps) {
 
 function TimerCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
+  const router = useRouter();
   const stage = ctx?.stagesById.get(data.task.id);
   const real = ctx?.realByStage.get(data.task.id);
   const running = ctx?.runningByStage.get(data.task.id);
@@ -210,6 +212,7 @@ function TimerCell({ data }: ColumnProps) {
     const r = running ? await stopTimer(stage.id) : await startTimer(stage.id);
     setPending(false);
     if (r.error) toast.error(r.error);
+    else router.refresh();
   }
 
   return (
@@ -269,6 +272,7 @@ function CostCell({ data }: ColumnProps) {
 
 function ActionsCell({ data }: ColumnProps) {
   const ctx = useContext(GanttCtx);
+  const router = useRouter();
   const stage = ctx?.stagesById.get(data.task.id);
   if (!stage || !ctx) return null;
   const isDone =
@@ -283,7 +287,10 @@ function ActionsCell({ data }: ColumnProps) {
             if (!confirm("Finalizar essa etapa?")) return;
             const r = await finalizeStage(stage.id, ctx.projectId);
             if (r.error) toast.error(r.error);
-            else toast.success("Etapa finalizada");
+            else {
+              toast.success("Etapa finalizada");
+              router.refresh();
+            }
           }}
         >
           <CheckCircle2 className="h-4 w-4" />
@@ -295,7 +302,10 @@ function ActionsCell({ data }: ColumnProps) {
           onClick={async () => {
             const r = await reopenStage(stage.id, ctx.projectId);
             if (r.error) toast.error(r.error);
-            else toast.success("Etapa reaberta");
+            else {
+              toast.success("Etapa reaberta");
+              router.refresh();
+            }
           }}
         >
           ↺
@@ -309,7 +319,10 @@ function ActionsCell({ data }: ColumnProps) {
             return;
           const r = await deleteStage(ctx.projectId, stage.id);
           if (r.error) toast.error(r.error);
-          else toast.success("Etapa removida");
+          else {
+            toast.success("Etapa removida");
+            router.refresh();
+          }
         }}
       >
         <Trash2 className="h-4 w-4" />
@@ -352,6 +365,7 @@ export default function ProjectGantt({
   readOnly?: boolean;
   groupByProject?: boolean;
 }) {
+  const router = useRouter();
   const [view, setView] = useState<ViewMode>(
     readOnly ? ViewMode.Week : ViewMode.Day,
   );
@@ -528,6 +542,7 @@ export default function ProjectGantt({
                     const end = isoFromDate(t.end);
                     const r = await moveStageDates(t.id, start, end);
                     if (r.error) toast.error(r.error);
+                    else router.refresh();
                   }
             }
           />

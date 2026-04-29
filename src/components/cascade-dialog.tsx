@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ListChecks, Layers, FileStack } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ export function CascadeDialog({
   onClose: () => void;
 }) {
   const [pending, setPending] = useState<CascadeMode | null>(null);
+  const router = useRouter();
 
   async function apply(mode: CascadeMode) {
     if (!args) return;
@@ -53,6 +55,7 @@ export function CascadeDialog({
     else if (mode === "project")
       toast.success("Etapas seguintes deste projeto reagendadas");
     else toast.success("Todas as etapas após esta data foram reagendadas");
+    router.refresh();
     onClose();
   }
 
