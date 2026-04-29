@@ -12,8 +12,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { PrintButton } from "@/components/print-button";
-import type { ProjectStage } from "@/lib/types";
+import { deriveStageStatus } from "@/lib/stage-status";
+import type { ProjectStage, StageRealView } from "@/lib/types";
 
 type LoadRow = {
   assignee_id: string;
@@ -24,6 +26,7 @@ type LoadRow = {
 type ProfileLite = {
   id: string;
   full_name: string;
+  email: string | null;
   jornada_diaria_h: number;
 };
 
@@ -32,16 +35,28 @@ type StageRow = ProjectStage & {
   profiles: { full_name: string } | null;
 };
 
+const STATUS_OPTS = [
+  { value: "planejado", label: "Planejado" },
+  { value: "em_andamento", label: "Em andamento" },
+  { value: "concluido", label: "Concluído" },
+  { value: "cancelado", label: "Cancelado" },
+  { value: "atrasado", label: "Atrasado (derivado)" },
+];
+
 export function CalendarClient({
   profiles,
   planned,
   real,
   stages,
+  projects,
+  realByStage,
 }: {
   profiles: ProfileLite[];
   planned: LoadRow[];
   real: LoadRow[];
   stages: StageRow[];
+  projects: { id: string; nome: string }[];
+  realByStage: StageRealView[];
 }) {
   return (
     <div className="grid gap-6">
@@ -79,36 +94,242 @@ export function CalendarClient({
           />
         </TabsContent>
         <TabsContent value="cal">
-          <Card>
-            <CardContent className="pt-6">
-              <FullCalendar
-                plugins={[dayGridPlugin, interactionPlugin]}
-                initialView="dayGridMonth"
-                locale={ptBrLocale}
-                height="auto"
-                events={stages.map((s) => ({
-                  id: s.id,
-                  title: `${s.projects?.nome ?? ""} · ${s.nome}${
-                    s.profiles?.full_name ? " (" + s.profiles.full_name + ")" : ""
-                  }`,
-                  start: s.start_date,
-                  end: addDay(s.end_date),
-                  backgroundColor: statusColor(s.status),
-                  borderColor: statusColor(s.status),
-                }))}
-              />
-            </CardContent>
-          </Card>
+          <CalendarTab
+            stages={stages}
+            projects={projects}
+            profiles={profiles}
+            planned={planned}
+            realByStage={realByStage}
+          />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
+function CalendarTab({
+  stages,
+  projects,
+  profiles,
+  planned,
+  realByStage,
+}: {
+  stages: StageRow[];
+  projects: { id: string; nome: string }[];
+  profiles: ProfileLite[];
+  planned: LoadRow[];
+  realByStage: StageRealView[];
+}) {
+  const projectOpts = projects.map((p) => ({ value: p.id, label: p.nome }));
+  const userOpts = [
+    ...profiles.map((u) => ({
+      value: u.id,
+      label: u.full_name || u.email || "—",
+    })),
+    { value: "__none__", label: "(sem responsável)" },
+  ];
+
+  const [projectIds, setProjectIds] = useState<Set<string>>(
+    () => new Set(projectOpts.map((o) => o.value)),
+  );
+  const [userIds, setUserIds] = useState<Set<string>>(
+    () => new Set(userOpts.map((o) => o.value)),
+  );
+  const [statuses, setStatuses] = useState<Set<string>>(
+    () => new Set(STATUS_OPTS.map((o) => o.value)),
+  );
+
+  const realMap = useMemo(
+    () => new Map(realByStage.map((r) => [r.stage_id, r])),
+    [realByStage],
+  );
+
+  const filtered = useMemo(() => {
+    return stages.filter((s) => {
+      if (!projectIds.has(s.project_id)) return false;
+      const userKey = s.assignee_id ?? "__none__";
+      if (!userIds.has(userKey)) return false;
+      const r = realMap.get(s.id);
+      const derived = deriveStageStatus(s, Number(r?.horas_reais ?? 0) > 0);
+      if (!statuses.has(derived)) return false;
+      return true;
+    });
+  }, [stages, projectIds, userIds, statuses, realMap]);
+
+  // Quando exatamente 1 usuário (real, não "__none__") está filtrado,
+  // mostra % de ocupação em cada célula do calendário
+  const singleUserId =
+    userIds.size === 1 ? Array.from(userIds)[0] : null;
+  const singleUser =
+    singleUserId && singleUserId !== "__none__"
+      ? profiles.find((p) => p.id === singleUserId)
+      : null;
+
+  const dailyPct = useMemo(() => {
+    const m = new Map<string, { horas: number; pct: number }>();
+    if (!singleUser) return m;
+    const jornada = singleUser.jornada_diaria_h || 8;
+    // Agrega só sobre os stages filtrados deste user
+    const filteredStageIds = new Set(
+      filtered
+        .filter((s) => s.assignee_id === singleUser.id)
+        .map((s) => s.id),
+    );
+    // O `planned` não tem stage_id; só user/dia/horas. Aproximação:
+    // se todos os stages do user estão no filtro, usa planned direto.
+    // Caso contrário (filtro reduziu), reconstroi do filtered manualmente.
+    const allStagesOfUser = stages.filter(
+      (s) => s.assignee_id === singleUser.id,
+    );
+    const allInFilter = allStagesOfUser.every((s) =>
+      filteredStageIds.has(s.id),
+    );
+    if (allInFilter) {
+      for (const r of planned) {
+        if (r.assignee_id === singleUser.id) {
+          const dia = String(r.dia).slice(0, 10);
+          const horas = Number(r.horas_dia);
+          m.set(dia, { horas, pct: horas / jornada });
+        }
+      }
+    } else {
+      // recalcula horas/dia distribuindo entre dias úteis de cada etapa
+      for (const s of allStagesOfUser) {
+        if (!filteredStageIds.has(s.id)) continue;
+        const start = new Date(s.start_date + "T00:00:00");
+        const end = new Date(s.end_date + "T00:00:00");
+        const days: string[] = [];
+        const cur = new Date(start);
+        while (cur <= end) {
+          const dow = cur.getDay();
+          if (dow !== 0 && dow !== 6) days.push(toIso(cur));
+          cur.setDate(cur.getDate() + 1);
+        }
+        if (days.length === 0) continue;
+        const perDay = Number(s.horas_estimadas ?? 0) / days.length;
+        for (const d of days) {
+          const cur = m.get(d) ?? { horas: 0, pct: 0 };
+          cur.horas += perDay;
+          cur.pct = cur.horas / jornada;
+          m.set(d, cur);
+        }
+      }
+    }
+    return m;
+  }, [filtered, planned, singleUser, stages]);
+
+  return (
+    <div className="grid gap-4">
+      <Card className="print:hidden">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Filtros</CardTitle>
+          <CardDescription>
+            {singleUser
+              ? `Mostrando % de ocupação diária para ${singleUser.full_name || singleUser.email}.`
+              : "Filtre por exatamente 1 usuário para ver o % de ocupação em cada dia."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+            <MultiSelect
+              label="Demandas"
+              options={projectOpts}
+              values={projectIds}
+              onChange={setProjectIds}
+            />
+            <MultiSelect
+              label="Responsável"
+              options={userOpts}
+              values={userIds}
+              onChange={setUserIds}
+            />
+            <MultiSelect
+              label="Status"
+              options={STATUS_OPTS}
+              values={statuses}
+              onChange={setStatuses}
+            />
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <FullCalendar
+            plugins={[dayGridPlugin, interactionPlugin]}
+            initialView="dayGridMonth"
+            locale={ptBrLocale}
+            height="auto"
+            events={filtered.map((s) => ({
+              id: s.id,
+              title: `${s.projects?.nome ?? ""} · ${s.nome}${
+                s.profiles?.full_name ? " (" + s.profiles.full_name + ")" : ""
+              }`,
+              start: s.start_date,
+              end: addDay(s.end_date),
+              backgroundColor: statusColor(
+                deriveStageStatus(
+                  s,
+                  Number(realMap.get(s.id)?.horas_reais ?? 0) > 0,
+                ),
+              ),
+              borderColor: statusColor(
+                deriveStageStatus(
+                  s,
+                  Number(realMap.get(s.id)?.horas_reais ?? 0) > 0,
+                ),
+              ),
+            }))}
+            dayCellContent={
+              singleUser
+                ? (arg) => {
+                    const dateStr = toIso(arg.date);
+                    const day = arg.dayNumberText;
+                    const info = dailyPct.get(dateStr);
+                    return (
+                      <div className="flex items-center justify-between w-full px-1">
+                        <span>{day}</span>
+                        {info && info.horas > 0 && (
+                          <span
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded tabular-nums"
+                            style={{
+                              background: pctBg(info.pct),
+                              color: info.pct > 1 ? "white" : "inherit",
+                            }}
+                            title={`${info.horas.toFixed(1)}h / ${singleUser.jornada_diaria_h}h`}
+                          >
+                            {(info.pct * 100).toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+                : undefined
+            }
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function pctBg(pct: number) {
+  if (pct > 1) return "hsl(0 84% 60% / 0.85)";
+  if (pct >= 0.75) return "hsl(38 92% 50% / 0.55)";
+  if (pct > 0) return "hsl(142 71% 45% / 0.35)";
+  return "transparent";
+}
+
 function addDay(iso: string) {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+function toIso(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 function statusColor(s: string) {
@@ -119,6 +340,8 @@ function statusColor(s: string) {
       return "#3b82f6";
     case "cancelado":
       return "#9ca3af";
+    case "atrasado":
+      return "#ef4444";
     default:
       return "#6366f1";
   }
@@ -278,7 +501,7 @@ function LoadGrid({
                               : ""
                           }`}
                           style={{
-                            background: cellBg(pct, h > 0),
+                            background: pctBg(pct < 0.0001 ? 0 : pct),
                             color: pct >= 1 ? "white" : undefined,
                           }}
                           title={`${h.toFixed(1)} h (${(pct * 100).toFixed(0)}%)`}
@@ -317,13 +540,6 @@ function Dot({ color }: { color: string }) {
   );
 }
 
-function cellBg(pct: number, hasLoad: boolean) {
-  if (!hasLoad) return "transparent";
-  if (pct >= 1) return "hsl(0 84% 60% / 0.85)";
-  if (pct >= 0.75) return "hsl(38 92% 50% / 0.55)";
-  return "hsl(142 71% 45% / 0.35)";
-}
-
 function mondayOf(d: Date) {
   const r = new Date(d);
   const dow = r.getDay();
@@ -331,13 +547,6 @@ function mondayOf(d: Date) {
   r.setDate(r.getDate() + diff);
   r.setHours(0, 0, 0, 0);
   return r;
-}
-
-function toIso(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
 }
 
 function sameDay(a: Date, b: Date) {
