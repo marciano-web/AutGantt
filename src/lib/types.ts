@@ -1,4 +1,4 @@
-export type Role = "admin" | "member";
+export type Role = "admin" | "member" | "cliente";
 
 export type Profile = {
   id: string;
@@ -8,6 +8,7 @@ export type Profile = {
   custo_hora: number;
   jornada_diaria_h: number;
   is_active: boolean;
+  can_view_all_projects: boolean;
   created_at: string;
   updated_at: string;
 };

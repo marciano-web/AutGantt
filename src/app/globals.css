@@ -102,19 +102,47 @@ body {
   .border, [class*="border-"] {
     border-color: #ccc !important;
   }
-  table { font-size: 9pt; }
-  table th { background: #f5f5f5 !important; -webkit-print-color-adjust: exact; }
-  /* Gantt readonly no relatorio: scale-down + remove scroll horizontal */
+  /* Tabelas DA APP: escopa-se ao wrapper do <Table> primitive pra NAO afetar
+     a tabela interna do wamra-gantt (que usa <table> para a task-list). */
+  .relative.w-full.overflow-auto {
+    overflow: visible !important;
+  }
+  .relative.w-full.overflow-auto > table {
+    width: 100% !important;
+    max-width: 100% !important;
+    font-size: 8pt;
+    table-layout: fixed; /* respeita widths nos TH; texto longo quebra */
+    border-collapse: collapse;
+  }
+  .relative.w-full.overflow-auto > table th,
+  .relative.w-full.overflow-auto > table td {
+    padding: 3pt 5pt !important;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    vertical-align: top !important;
+  }
+  .relative.w-full.overflow-auto > table th {
+    background: #f5f5f5 !important;
+    -webkit-print-color-adjust: exact;
+  }
+  /* Gantt wamra: reduz mais agressivamente pra caber em paisagem A4.
+     Nao mexer em overflow dos descendentes — wamra precisa do flex interno. */
   .gantt-print-fit {
     overflow: visible !important;
-    transform: scale(0.7);
+    transform: scale(0.55);
     transform-origin: top left;
-    width: 142.85%; /* compensa o scale */
-    margin-bottom: 6mm;
+    width: 181.82%; /* compensa o scale (1/0.55) */
+    margin-bottom: -10mm;
   }
-  .gantt-print-fit *,
-  .gantt-print-fit ::-webkit-scrollbar {
-    overflow: visible !important;
+  /* Custom Gantt: limita altura maxima da SVG pra caber junto com o header
+     na mesma pagina. height auto + max-height permite que projetos com
+     poucas etapas (aspect ratio largo) renderizem natural, e os com muitas
+     etapas (aspect ratio quase quadrado) sejam encolhidos pra caber. */
+  .custom-gantt-print svg {
+    max-height: 170mm !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
   }
   /* Forca cores nas barras do Gantt e badges */
   * {

@@ -1,14 +1,23 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { brl, fmtDate } from "@/lib/utils";
 import { NewProjectDialog } from "./new-project-dialog";
+import { visibleProjectIds } from "@/lib/project-scope";
 
 export default async function Page() {
   const supabase = await createClient();
+  const { data: u } = await supabase.auth.getUser();
+  const meId = u.user?.id ?? "";
+  const scope = await visibleProjectIds(supabase, meId);
+
+  let projectsQuery = supabase
+    .from("projects")
+    .select("*, demand_types(nome)")
+    .order("created_at", { ascending: false });
+  if (scope !== null) projectsQuery = projectsQuery.in("id", scope.length ? scope : ["__none__"]);
+
   const [
     { data: projects },
     { data: types },
@@ -16,16 +25,14 @@ export default async function Page() {
     { data: users },
     { data: costs },
   ] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("*, demand_types(nome)")
-      .order("created_at", { ascending: false }),
+    projectsQuery,
     supabase.from("demand_types").select("*").eq("is_active", true).order("nome"),
     supabase.from("stage_templates").select("*").order("ordem"),
     supabase
       .from("profiles")
       .select("id, full_name, email")
       .eq("is_active", true)
+      .neq("role", "cliente")
       .order("full_name"),
     supabase.from("v_project_costs").select("*"),
   ]);

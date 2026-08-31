@@ -1,12 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Button } from "@/components/ui/button";
-import { deriveStageStatus } from "@/lib/stage-status";
+import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { PrintButton } from "@/components/print-button";
+import { StatusPill, deriveStageStatus, statusLabel, type DerivedStatus } from "@/lib/stage-status";
+import { brl, fmtDate } from "@/lib/utils";
 import type {
   ProjectStage,
   StageRealView,
@@ -94,18 +97,43 @@ export function GlobalGanttClient({
   }
 
   const projectsInFilter = new Set(filtered.map((s) => s.project_id)).size;
+  const totH = filtered.reduce(
+    (a, s) => a + Number(realByStage.get(s.id)?.horas_reais ?? 0),
+    0,
+  );
+  const totC = filtered.reduce(
+    (a, s) => a + Number(realByStage.get(s.id)?.custo_real ?? 0),
+    0,
+  );
+  const totEst = filtered.reduce(
+    (a, s) => a + Number(s.horas_estimadas ?? 0),
+    0,
+  );
+
+  const filterSummary = buildFilterSummary({
+    projectOpts,
+    userOpts,
+    projectIds,
+    userIds,
+    statuses,
+    dateFrom,
+    dateTo,
+  });
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Gantt Geral</h1>
-        <p className="text-sm text-muted-foreground">
-          Todas as etapas de todos os projetos. Edite datas, controle o timer,
-          finalize ou exclua direto da grade.
-        </p>
+      <div className="flex items-start justify-between gap-4 print:hidden">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Gantt Geral</h1>
+          <p className="text-sm text-muted-foreground">
+            Todas as etapas de todos os projetos. Edite datas, controle o timer,
+            finalize ou exclua direto da grade.
+          </p>
+        </div>
+        <PrintButton label="Exportar PDF" />
       </div>
 
-      <Card>
+      <Card className="print:hidden">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Filtros</CardTitle>
         </CardHeader>
@@ -154,6 +182,30 @@ export function GlobalGanttClient({
         </CardContent>
       </Card>
 
+      <div className="hidden print:block mb-2">
+        <h1 className="text-xl font-semibold">AutGantt — Gantt Geral</h1>
+        <p className="text-xs text-gray-600">
+          {filtered.length} etapa(s) · {projectsInFilter} projeto(s) · Gerado em{" "}
+          {new Date().toLocaleString("pt-BR")}
+        </p>
+        {filterSummary.length > 0 && (
+          <ul className="text-[10pt] text-gray-700 mt-1 grid gap-0.5">
+            {filterSummary.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
+        <div className="grid grid-cols-4 gap-2 mt-3 text-[10pt]">
+          <PrintStat label="Etapas" value={String(filtered.length)} />
+          <PrintStat label="Projetos" value={String(projectsInFilter)} />
+          <PrintStat
+            label="Horas reais / est."
+            value={`${totH.toFixed(1)} / ${totEst.toFixed(1)} h`}
+          />
+          <PrintStat label="Custo real" value={brl(totC)} />
+        </div>
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
@@ -170,6 +222,129 @@ export function GlobalGanttClient({
           />
         </CardContent>
       </Card>
+
+      <Card className="hidden print:block">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Etapas</CardTitle>
+          <CardDescription>
+            Detalhamento das etapas filtradas.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <THead>
+              <TR>
+                <TH style={{ width: "14%" }}>Projeto</TH>
+                <TH style={{ width: "22%" }}>Etapa</TH>
+                <TH style={{ width: "16%" }}>Responsável</TH>
+                <TH style={{ width: "8%" }}>Início</TH>
+                <TH style={{ width: "8%" }}>Fim</TH>
+                <TH style={{ width: "11%" }}>Status</TH>
+                <TH style={{ width: "7%" }} className="text-right">
+                  Horas est.
+                </TH>
+                <TH style={{ width: "7%" }} className="text-right">
+                  Horas reais
+                </TH>
+                <TH style={{ width: "7%" }} className="text-right">
+                  Custo real
+                </TH>
+              </TR>
+            </THead>
+            <TBody>
+              {filtered.map((s) => {
+                const r = realByStage.get(s.id);
+                const derived = deriveStageStatus(
+                  s,
+                  Number(r?.horas_reais ?? 0) > 0,
+                );
+                return (
+                  <TR key={s.id}>
+                    <TD className="text-xs text-muted-foreground">
+                      {s.projects?.nome ?? "—"}
+                    </TD>
+                    <TD className="font-medium">
+                      {s.ordem}. {s.nome}
+                    </TD>
+                    <TD>{s.profiles?.full_name ?? "—"}</TD>
+                    <TD>{fmtDate(s.start_date)}</TD>
+                    <TD>{fmtDate(s.end_date)}</TD>
+                    <TD>
+                      <StatusPill status={derived} />
+                    </TD>
+                    <TD className="text-right">
+                      {Number(s.horas_estimadas).toFixed(1)}
+                    </TD>
+                    <TD className="text-right">
+                      {Number(r?.horas_reais ?? 0).toFixed(1)}
+                    </TD>
+                    <TD className="text-right">{brl(r?.custo_real ?? 0)}</TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
+}
+
+function PrintStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-gray-300 rounded px-2 py-1">
+      <div className="text-[8pt] uppercase tracking-wide text-gray-500">
+        {label}
+      </div>
+      <div className="font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function buildFilterSummary({
+  projectOpts,
+  userOpts,
+  projectIds,
+  userIds,
+  statuses,
+  dateFrom,
+  dateTo,
+}: {
+  projectOpts: { value: string; label: string }[];
+  userOpts: { value: string; label: string }[];
+  projectIds: Set<string>;
+  userIds: Set<string>;
+  statuses: Set<string>;
+  dateFrom: string;
+  dateTo: string;
+}): string[] {
+  const lines: string[] = [];
+  if (projectIds.size < projectOpts.length) {
+    const names = projectOpts
+      .filter((o) => projectIds.has(o.value))
+      .map((o) => o.label);
+    lines.push(
+      `Demandas (${names.length}/${projectOpts.length}): ${names.join(", ") || "—"}`,
+    );
+  }
+  if (userIds.size < userOpts.length) {
+    const names = userOpts
+      .filter((o) => userIds.has(o.value))
+      .map((o) => o.label);
+    lines.push(
+      `Usuários (${names.length}/${userOpts.length}): ${names.join(", ") || "—"}`,
+    );
+  }
+  if (statuses.size < STATUS_OPTS.length) {
+    const names = STATUS_OPTS.filter((o) => statuses.has(o.value)).map(
+      (o) => statusLabel[o.value as DerivedStatus] ?? o.label,
+    );
+    lines.push(`Status: ${names.join(", ") || "—"}`);
+  }
+  if (dateFrom || dateTo) {
+    lines.push(
+      `Período: ${dateFrom ? fmtDate(dateFrom) : "…"} → ${dateTo ? fmtDate(dateTo) : "…"}`,
+    );
+  }
+  return lines;
 }

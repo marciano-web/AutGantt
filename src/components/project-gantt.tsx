@@ -7,23 +7,67 @@ import {
   ViewMode,
   type Column,
   type ColumnProps,
+  type DateSetup,
 } from "@wamra/gantt-task-react";
 import "@wamra/gantt-task-react/dist/style.css";
+import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CheckCircle2, Pause, Play, Trash2 } from "lucide-react";
+import { CheckCircle2, Pause, Play, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ProjectStage, StageRealView, TimeEntry } from "@/lib/types";
 import {
   deleteStage,
   finalizeStage,
   moveStageDates,
+  moveStageDatesCascade,
+  recalcStageDatesFromHoras,
   reopenStage,
   startTimer,
   stopTimer,
 } from "@/app/(app)/projects/actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { StatusPill, deriveStageStatus } from "@/lib/stage-status";
 import { brl, fmtDuration } from "@/lib/utils";
+import { isBusinessDay } from "@/lib/holidays";
 import { CascadeDialog, type CascadePromptArgs } from "@/components/cascade-dialog";
+
+const HOURS_PER_DAY = 8;
+
+function daysForHoras(horas: number): number {
+  return Math.max(1, Math.ceil(Number(horas) / HOURS_PER_DAY));
+}
+
+// Avanca `count` dias uteis a partir de `start` (inclusive: count=1 = mesmo dia
+// se util, senao proximo util). Respeita feriados via isBusinessDay.
+function addBusinessDays(start: Date, count: number): Date {
+  const r = new Date(start);
+  while (!isBusinessDay(r)) r.setDate(r.getDate() + 1);
+  let added = 1;
+  while (added < count) {
+    r.setDate(r.getDate() + 1);
+    if (isBusinessDay(r)) added++;
+  }
+  return r;
+}
+
+function subBusinessDays(end: Date, count: number): Date {
+  const r = new Date(end);
+  while (!isBusinessDay(r)) r.setDate(r.getDate() - 1);
+  let subtracted = 1;
+  while (subtracted < count) {
+    r.setDate(r.getDate() - 1);
+    if (isBusinessDay(r)) subtracted++;
+  }
+  return r;
+}
 
 type StageInput = ProjectStage & {
   profiles?: { full_name: string } | null;
@@ -50,6 +94,38 @@ const DATE_FORMATS = {
   // Em Day view, o top header usa monthTopHeaderFormat (capitalizado pelo CSS)
   monthTopHeaderFormat: "MMMM yyyy",
 } as const;
+
+// Em Week view, o wamra constroi o top header concatenando "<MonthText>, <Year>".
+// Como nosso monthTopHeaderFormat ja inclui yyyy, isso duplica o ano
+// (ex: "junho 2026, 2026"). Sobrescrevemos renderTopHeader pra cortar a duplicidade
+// sem afetar Day/Month views.
+function renderTopHeader(
+  date: Date,
+  viewMode: ViewMode,
+  dateSetup: DateSetup,
+) {
+  if (viewMode === ViewMode.Week) {
+    // Override pra evitar duplicidade do ano (default do wamra concatena
+    // ", yyyy" no final do nosso monthTopHeaderFormat que ja inclui yyyy)
+    return format(date, "MMMM yyyy", { locale: dateSetup.dateLocale });
+  }
+  // Demais views: comportamento padrao (usa monthTopHeaderFormat etc)
+  switch (viewMode) {
+    case ViewMode.Year:
+      return date.getFullYear().toString();
+    case ViewMode.Month:
+      return date.getFullYear().toString();
+    case ViewMode.Day:
+    case ViewMode.TwoDays:
+      return format(date, dateSetup.dateFormats.monthTopHeaderFormat, {
+        locale: dateSetup.dateLocale,
+      });
+    default:
+      return format(date, dateSetup.dateFormats.monthTopHeaderFormat, {
+        locale: dateSetup.dateLocale,
+      });
+  }
+}
 
 // Tinge a 1ª coluna de cada mês para destacar a transição (em qualquer view)
 function checkIsMonthStart(date: Date) {
@@ -123,14 +199,19 @@ function StartCell({ data }: ColumnProps) {
       onChange={(e) => {
         const newStart = e.target.value;
         if (!newStart || newStart === stage.start_date) return;
-        const newEnd = newStart > stage.end_date ? newStart : stage.end_date;
+        // Recalcula Fim baseado nas horas estimadas (mantem duracao)
+        const horas = Number(stage.horas_estimadas ?? 0);
+        const days = daysForHoras(horas);
+        const startDate = new Date(newStart + "T00:00:00");
+        const endDate = addBusinessDays(startDate, days);
+        const newEnd = isoFromDate(endDate);
         ctx.requestDateChange({
           stageId: stage.id,
           oldStart: stage.start_date,
           oldEnd: stage.end_date,
           newStart,
           newEnd,
-          horasEstimadas: Number(stage.horas_estimadas ?? 0),
+          horasEstimadas: horas,
         });
       }}
     />
@@ -150,20 +231,83 @@ function EndCell({ data }: ColumnProps) {
       onChange={(e) => {
         const newEnd = e.target.value;
         if (!newEnd || newEnd === stage.end_date) return;
-        if (newEnd < stage.start_date) {
-          toast.error("Fim deve ser ≥ Início");
-          return;
-        }
+        // Recalcula Inicio baseado nas horas (manten duracao consistente)
+        const horas = Number(stage.horas_estimadas ?? 0);
+        const days = daysForHoras(horas);
+        const endDate = new Date(newEnd + "T00:00:00");
+        const startDate = subBusinessDays(endDate, days);
+        const newStart = isoFromDate(startDate);
         ctx.requestDateChange({
           stageId: stage.id,
           oldStart: stage.start_date,
           oldEnd: stage.end_date,
-          newStart: stage.start_date,
+          newStart,
           newEnd,
-          horasEstimadas: Number(stage.horas_estimadas ?? 0),
+          horasEstimadas: horas,
         });
       }}
     />
+  );
+}
+
+function HorasCell({ data }: ColumnProps) {
+  const ctx = useContext(GanttCtx);
+  const router = useRouter();
+  const stage = ctx?.stagesById.get(data.task.id);
+  const [pending, setPending] = useState(false);
+  if (!stage || !ctx) return null;
+  const current = Number(stage.horas_estimadas ?? 0);
+  return (
+    <input
+      key={`h:${current}`}
+      type="number"
+      step={0.5}
+      min={0}
+      disabled={pending}
+      defaultValue={current}
+      className="w-[70px] text-xs h-7 rounded border border-input bg-background px-2 tabular-nums"
+      onBlur={async (e) => {
+        const newHoras = Number(e.target.value);
+        if (Number.isNaN(newHoras) || newHoras < 0) {
+          e.target.value = String(current);
+          return;
+        }
+        if (newHoras === current) return;
+        // Mantem Inicio, recalcula Fim baseado nas novas horas. Salva direto
+        // sem cascade dialog (mudanca de horas e local, nao afeta sequencia).
+        const days = daysForHoras(newHoras);
+        const startDate = new Date(stage.start_date + "T00:00:00");
+        const endDate = addBusinessDays(startDate, days);
+        const newEnd = isoFromDate(endDate);
+        setPending(true);
+        const r = await moveStageDatesCascade(
+          stage.id,
+          stage.start_date,
+          newEnd,
+          "self",
+          newHoras,
+        );
+        setPending(false);
+        if (r.error) {
+          toast.error(r.error);
+          e.target.value = String(current);
+        } else {
+          toast.success("Horas atualizadas");
+          router.refresh();
+        }
+      }}
+    />
+  );
+}
+
+function HorasReadCell({ data }: ColumnProps) {
+  const ctx = useContext(GanttCtx);
+  const stage = ctx?.stagesById.get(data.task.id);
+  if (!stage) return null;
+  return (
+    <div className="px-2 text-xs tabular-nums">
+      {Number(stage.horas_estimadas ?? 0).toFixed(1)}h
+    </div>
   );
 }
 
@@ -313,6 +457,9 @@ function ActionsCell({ data }: ColumnProps) {
           ↺
         </button>
       )}
+      {!isDone && (
+        <RecalcButton stageId={stage.id} stageName={stage.nome} />
+      )}
       <button
         title="Excluir etapa"
         className="h-6 w-6 rounded inline-flex items-center justify-center hover:bg-destructive/10 text-destructive"
@@ -333,10 +480,93 @@ function ActionsCell({ data }: ColumnProps) {
   );
 }
 
+function RecalcButton({
+  stageId,
+  stageName,
+}: {
+  stageId: string;
+  stageName: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState<"self" | "project" | null>(null);
+
+  async function apply(mode: "self" | "project") {
+    setPending(mode);
+    const r = await recalcStageDatesFromHoras(stageId, mode);
+    setPending(null);
+    if (r.error) {
+      toast.error(r.error);
+      return;
+    }
+    if (mode === "self") toast.success("Etapa recalculada");
+    else toast.success(`${r.updated ?? 0} etapa(s) recalculada(s)`);
+    router.refresh();
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
+      <DialogTrigger asChild>
+        <button
+          title="Recalcular datas pelas horas estimadas"
+          className="h-6 w-6 rounded inline-flex items-center justify-center hover:bg-primary/10 text-primary"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Recalcular datas pelas horas</DialogTitle>
+          <DialogDescription>
+            Fim recalculado a partir do Início, usando 8h/dia útil (feriados
+            BR respeitados). Etapas concluídas/canceladas são preservadas.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+          Etapa: <span className="font-medium text-foreground">{stageName}</span>
+        </div>
+        <div className="grid gap-2">
+          <Button
+            variant="outline"
+            disabled={pending !== null}
+            onClick={() => apply("self")}
+            className="justify-start h-auto py-3"
+          >
+            <div className="text-left">
+              <div className="font-medium">Apenas esta etapa</div>
+              <div className="text-xs text-muted-foreground font-normal">
+                Mantém o Início, recalcula só o Fim baseado nas horas.
+              </div>
+            </div>
+          </Button>
+          <Button
+            variant="outline"
+            disabled={pending !== null}
+            onClick={() => apply("project")}
+            className="justify-start h-auto py-3"
+          >
+            <div className="text-left">
+              <div className="font-medium">
+                Esta etapa + as seguintes deste projeto
+              </div>
+              <div className="text-xs text-muted-foreground font-normal">
+                Encadeia: cada etapa seguinte começa no próximo dia útil
+                após o Fim da anterior.
+              </div>
+            </div>
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const INTERACTIVE_COLUMNS: readonly Column[] = [
   { id: "title", Cell: TitleCell, width: 220, title: "Etapa" },
   { id: "start", Cell: StartCell, width: 130, title: "Início" },
   { id: "end", Cell: EndCell, width: 130, title: "Fim" },
+  { id: "horas", Cell: HorasCell, width: 90, title: "Horas est." },
   { id: "status", Cell: StatusCell, width: 130, title: "Status" },
   { id: "timer", Cell: TimerCell, width: 130, title: "Timer" },
   { id: "cost", Cell: CostCell, width: 100, title: "Custo" },
@@ -347,6 +577,7 @@ const READONLY_COLUMNS: readonly Column[] = [
   { id: "title", Cell: TitleCell, width: 180, title: "Etapa" },
   { id: "start", Cell: StartReadCell, width: 80, title: "Início" },
   { id: "end", Cell: EndReadCell, width: 80, title: "Fim" },
+  { id: "horas", Cell: HorasReadCell, width: 70, title: "Horas est." },
   { id: "status", Cell: StatusCell, width: 100, title: "Status" },
 ];
 
@@ -415,6 +646,16 @@ export default function ProjectGantt({
       if (!byProject.has(s.project_id)) byProject.set(s.project_id, []);
       byProject.get(s.project_id)!.push(s);
     }
+    // Ordena etapas DENTRO do projeto pela sequencia logica (ordem), nao por
+    // start_date — assim 1, 2, 3, 4... aparecem na ordem certa mesmo quando
+    // alguma foi reagendada e cronologicamente esta fora.
+    // Desempate por start_date pra ficar estavel.
+    for (const items of byProject.values()) {
+      items.sort(
+        (a, b) =>
+          a.ordem - b.ordem || a.start_date.localeCompare(b.start_date),
+      );
+    }
     const out: Task[] = [];
     for (const [pid, items] of byProject) {
       let minStart = items[0].start_date;
@@ -456,14 +697,9 @@ export default function ProjectGantt({
     return out;
   }, [stages, groupByProject]);
 
-  if (tasks.length === 0)
-    return (
-      <div className="text-sm text-muted-foreground py-8 text-center">
-        Sem etapas para exibir.
-      </div>
-    );
-
-  // Chave que muda quando alguma data muda → força wamra a refletir
+  // IMPORTANTE: todos os hooks DEVEM ser chamados antes de qualquer early return,
+  // senao a contagem de hooks varia entre renders (ex: filtro de data zera tasks)
+  // e o React quebra com "Rendered fewer hooks than expected".
   const stagesKey = useMemo(
     () =>
       stages
@@ -471,6 +707,13 @@ export default function ProjectGantt({
         .join("|"),
     [stages],
   );
+
+  if (tasks.length === 0)
+    return (
+      <div className="text-sm text-muted-foreground py-8 text-center">
+        Sem etapas para exibir.
+      </div>
+    );
 
   const colWidth = readOnly
     ? view === ViewMode.Month
@@ -513,17 +756,14 @@ export default function ProjectGantt({
             </button>
           ))}
         </div>
-        <div
-          className={`border border-border rounded-md overflow-hidden ${
-            readOnly ? "gantt-print-fit" : ""
-          }`}
-        >
+        <div className="border border-border rounded-md overflow-hidden gantt-print-fit">
           <Gantt
             key={stagesKey}
             tasks={tasks}
             viewMode={view}
             dateLocale={ptBR}
             dateFormats={DATE_FORMATS}
+            renderTopHeader={renderTopHeader}
             checkIsHoliday={checkIsMonthStart}
             colors={{
               holidayBackgroundColor: "rgba(99, 102, 241, 0.18)",

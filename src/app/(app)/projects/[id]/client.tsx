@@ -1,7 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { CheckCircle2, Pencil, Plus, RotateCcw, Trash2, Clock } from "lucide-react";
+import {
+  CheckCircle2,
+  Layers,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Clock,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,7 +48,9 @@ import {
   finalizeProject,
   finalizeStage,
   reopenStage,
+  rescheduleProjectByCapacity,
   updateProject,
+  updateTimeEntry,
   upsertStage,
 } from "../actions";
 import { StatusPill, deriveStageStatus } from "@/lib/stage-status";
@@ -114,6 +124,9 @@ export function ProjectDetailClient({
         <div className="flex gap-2 print:hidden">
           <PrintButton />
           <EditProjectDialog project={project} />
+          {project.status !== "concluido" && project.status !== "cancelado" && (
+            <ReorgButton projectId={project.id} />
+          )}
           {project.status !== "concluido" && project.status !== "cancelado" && (
             <Button
               variant="default"
@@ -388,19 +401,24 @@ export function ProjectDetailClient({
                           </TD>
                           <TD className="text-right">
                             {e.user_id === meId && (
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={async () => {
-                                  if (!confirm("Excluir esse apontamento?"))
-                                    return;
-                                  const r = await deleteTimeEntry(e.id);
-                                  if (r.error) toast.error(r.error);
-                                  else toast.success("Apontamento removido");
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <div className="flex justify-end gap-1">
+                                {e.ended_at && (
+                                  <EditTimeEntryDialog entry={e} />
+                                )}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  onClick={async () => {
+                                    if (!confirm("Excluir esse apontamento?"))
+                                      return;
+                                    const r = await deleteTimeEntry(e.id);
+                                    if (r.error) toast.error(r.error);
+                                    else toast.success("Apontamento removido");
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             )}
                           </TD>
                         </TR>
@@ -644,5 +662,192 @@ function StageDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function EditTimeEntryDialog({ entry }: { entry: TimeEntryRow }) {
+  const [open, setOpen] = useState(false);
+  const [startedAt, setStartedAt] = useState(() =>
+    isoToLocalInput(entry.started_at),
+  );
+  const [endedAt, setEndedAt] = useState(() =>
+    entry.ended_at ? isoToLocalInput(entry.ended_at) : "",
+  );
+  const [pending, setPending] = useState(false);
+
+  // Recalcula ao vivo pra preview
+  const startMs = startedAt ? new Date(startedAt).getTime() : NaN;
+  const endMs = endedAt ? new Date(endedAt).getTime() : NaN;
+  const validRange =
+    !Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs;
+  const seconds = validRange ? (endMs - startMs) / 1000 : 0;
+  const newCost = (seconds / 3600) * Number(entry.hourly_rate);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) {
+          // reseta valores ao reabrir
+          setStartedAt(isoToLocalInput(entry.started_at));
+          setEndedAt(entry.ended_at ? isoToLocalInput(entry.ended_at) : "");
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="icon" variant="ghost" title="Editar apontamento">
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Editar apontamento</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1">
+              <Label className="text-xs">Início</Label>
+              <Input
+                type="datetime-local"
+                step={1}
+                value={startedAt}
+                onChange={(e) => setStartedAt(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Fim</Label>
+              <Input
+                type="datetime-local"
+                step={1}
+                value={endedAt}
+                onChange={(e) => setEndedAt(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Duração
+              </div>
+              <div className="font-semibold tabular-nums">
+                {validRange ? fmtDuration(seconds) : "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Custo/h
+              </div>
+              <div className="font-semibold tabular-nums">
+                {brl(entry.hourly_rate)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Custo
+              </div>
+              <div className="font-semibold tabular-nums">
+                {validRange ? brl(newCost) : "—"}
+              </div>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            O custo/h é o snapshot do momento do start — não muda mesmo se
+            você atualizar seu próprio custo/h depois. Apenas a duração
+            (start/fim) é editável.
+          </p>
+
+          {!validRange && (startedAt || endedAt) && (
+            <p className="text-xs text-destructive">
+              Fim deve ser posterior ao início.
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            disabled={pending}
+          >
+            Cancelar
+          </Button>
+          <Button
+            disabled={!validRange || pending}
+            onClick={async () => {
+              if (!validRange) return;
+              setPending(true);
+              const r = await updateTimeEntry(
+                entry.id,
+                new Date(startedAt).toISOString(),
+                new Date(endedAt).toISOString(),
+              );
+              setPending(false);
+              if (r.error) {
+                toast.error(r.error);
+                return;
+              }
+              toast.success("Apontamento atualizado");
+              setOpen(false);
+            }}
+          >
+            {pending ? "Salvando…" : "Salvar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function isoToLocalInput(iso: string): string {
+  // Converte ISO (UTC) para o formato YYYY-MM-DDTHH:MM:SS no fuso local
+  // pra alimentar <input type="datetime-local">
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  return `${y}-${m}-${dd}T${h}:${mi}:${s}`;
+}
+
+function ReorgButton({ projectId }: { projectId: string }) {
+  const [pending, setPending] = useState(false);
+  return (
+    <Button
+      variant="outline"
+      disabled={pending}
+      onClick={async () => {
+        if (
+          !confirm(
+            "Reorganizar carga deste projeto?\n\n" +
+              "As etapas serão fracionadas em horas-por-dia respeitando a jornada " +
+              "de cada responsável e o que já foi reservado por outros projetos. " +
+              "Pode gerar splits ('parte 1/N, 2/N…').\n\n" +
+              "Etapas já concluídas/canceladas não são alteradas.",
+          )
+        )
+          return;
+        setPending(true);
+        const r = await rescheduleProjectByCapacity(projectId);
+        setPending(false);
+        if (r.error) {
+          toast.error(r.error);
+          return;
+        }
+        const created = r.splitsCreated ?? 0;
+        const removed = r.splitsRemoved ?? 0;
+        toast.success(
+          `Carga reorganizada — ${created} parte(s) criada(s)${
+            removed > 0 ? `, ${removed} obsoleta(s) removida(s)` : ""
+          }.`,
+        );
+      }}
+    >
+      <Layers className="h-4 w-4" />
+      {pending ? "Reorganizando…" : "Reorganizar carga"}
+    </Button>
   );
 }
