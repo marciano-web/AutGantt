@@ -911,13 +911,6 @@ export async function startTimer(stageId: string) {
   const userId = u.user?.id;
   if (!userId) return { error: "Não autenticado" };
 
-  // Para qualquer timer rodando do mesmo user (mesmo que em outra etapa)
-  await supabase
-    .from("time_entries")
-    .update({ ended_at: new Date().toISOString() })
-    .eq("user_id", userId)
-    .is("ended_at", null);
-
   const { error } = await supabase.from("time_entries").insert({
     stage_id: stageId,
     user_id: userId,
