@@ -344,91 +344,7 @@ export function ProjectDetailClient({
         </TabsContent>
 
         <TabsContent value="timesheet">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Apontamentos de tempo</CardTitle>
-              <CardDescription>
-                Histórico de start/stop. O custo é congelado no início de cada
-                apontamento (snapshot do custo/h do usuário).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {entries.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-6 text-center">
-                  Nenhum apontamento ainda.
-                </div>
-              ) : (
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>Etapa</TH>
-                      <TH>Usuário</TH>
-                      <TH>Início</TH>
-                      <TH>Fim</TH>
-                      <TH className="text-right">Duração</TH>
-                      <TH className="text-right">Custo/h</TH>
-                      <TH className="text-right">Custo</TH>
-                      <TH />
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {entries.map((e) => {
-                      const stage = stages.find((s) => s.id === e.stage_id);
-                      const seconds = e.ended_at
-                        ? (new Date(e.ended_at).getTime() -
-                            new Date(e.started_at).getTime()) /
-                          1000
-                        : 0;
-                      const cost = (seconds / 3600) * Number(e.hourly_rate);
-                      return (
-                        <TR key={e.id}>
-                          <TD>{stage?.nome ?? "—"}</TD>
-                          <TD>{e.profiles?.full_name ?? "—"}</TD>
-                          <TD className="text-xs">
-                            {new Date(e.started_at).toLocaleString("pt-BR")}
-                          </TD>
-                          <TD className="text-xs">
-                            {e.ended_at
-                              ? new Date(e.ended_at).toLocaleString("pt-BR")
-                              : <span className="text-success">⏵ rodando</span>}
-                          </TD>
-                          <TD className="text-right tabular-nums">
-                            {e.ended_at ? fmtDuration(seconds) : "—"}
-                          </TD>
-                          <TD className="text-right">{brl(e.hourly_rate)}</TD>
-                          <TD className="text-right font-medium">
-                            {e.ended_at ? brl(cost) : "—"}
-                          </TD>
-                          <TD className="text-right">
-                            {e.user_id === meId && (
-                              <div className="flex justify-end gap-1">
-                                {e.ended_at && (
-                                  <EditTimeEntryDialog entry={e} />
-                                )}
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  onClick={async () => {
-                                    if (!confirm("Excluir esse apontamento?"))
-                                      return;
-                                    const r = await deleteTimeEntry(e.id);
-                                    if (r.error) toast.error(r.error);
-                                    else toast.success("Apontamento removido");
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            )}
-                          </TD>
-                        </TR>
-                      );
-                    })}
-                  </TBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <TimesheetTab entries={entries} stages={stages} meId={meId} />
         </TabsContent>
 
         <TabsContent value="gantt">
@@ -797,6 +713,185 @@ function EditTimeEntryDialog({ entry }: { entry: TimeEntryRow }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function TimesheetTab({
+  entries,
+  stages,
+  meId,
+}: {
+  entries: TimeEntryRow[];
+  stages: StageWithProfile[];
+  meId: string;
+}) {
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const filtered = useMemo(() => {
+    return entries.filter((e) => {
+      const day = e.started_at.slice(0, 10);
+      if (dateFrom && day < dateFrom) return false;
+      if (dateTo && day > dateTo) return false;
+      return true;
+    });
+  }, [entries, dateFrom, dateTo]);
+
+  const totalSec = useMemo(
+    () =>
+      filtered.reduce((acc, e) => {
+        if (!e.ended_at) return acc;
+        return (
+          acc +
+          (new Date(e.ended_at).getTime() - new Date(e.started_at).getTime()) /
+            1000
+        );
+      }, 0),
+    [filtered],
+  );
+
+  const totalCost = useMemo(
+    () =>
+      filtered.reduce((acc, e) => {
+        if (!e.ended_at) return acc;
+        const sec =
+          (new Date(e.ended_at).getTime() - new Date(e.started_at).getTime()) /
+          1000;
+        return acc + (sec / 3600) * Number(e.hourly_rate);
+      }, 0),
+    [filtered],
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Apontamentos de tempo</CardTitle>
+        <CardDescription>
+          Histórico de start/stop. O custo é congelado no início de cada
+          apontamento (snapshot do custo/h do usuário).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="grid gap-1">
+            <Label className="text-xs">De</Label>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-8 text-sm w-36"
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label className="text-xs">Até</Label>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-8 text-sm w-36"
+            />
+          </div>
+          {(dateFrom || dateTo) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setDateFrom(""); setDateTo(""); }}
+            >
+              Limpar
+            </Button>
+          )}
+          {filtered.length > 0 && (
+            <div className="ml-auto flex gap-4 text-sm">
+              <span className="text-muted-foreground">
+                {filtered.length} apontamento(s)
+              </span>
+              <span className="font-medium tabular-nums">
+                {fmtDuration(totalSec)}
+              </span>
+              <span className="font-medium tabular-nums text-primary">
+                {brl(totalCost)}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-6 text-center">
+            {entries.length === 0
+              ? "Nenhum apontamento ainda."
+              : "Nenhum apontamento no período selecionado."}
+          </div>
+        ) : (
+          <Table>
+            <THead>
+              <TR>
+                <TH>Etapa</TH>
+                <TH>Usuário</TH>
+                <TH>Início</TH>
+                <TH>Fim</TH>
+                <TH className="text-right">Duração</TH>
+                <TH className="text-right">Custo/h</TH>
+                <TH className="text-right">Custo</TH>
+                <TH />
+              </TR>
+            </THead>
+            <TBody>
+              {filtered.map((e) => {
+                const stage = stages.find((s) => s.id === e.stage_id);
+                const seconds = e.ended_at
+                  ? (new Date(e.ended_at).getTime() -
+                      new Date(e.started_at).getTime()) /
+                    1000
+                  : 0;
+                const cost = (seconds / 3600) * Number(e.hourly_rate);
+                return (
+                  <TR key={e.id}>
+                    <TD>{stage?.nome ?? "—"}</TD>
+                    <TD>{e.profiles?.full_name ?? "—"}</TD>
+                    <TD className="text-xs">
+                      {new Date(e.started_at).toLocaleString("pt-BR")}
+                    </TD>
+                    <TD className="text-xs">
+                      {e.ended_at ? (
+                        new Date(e.ended_at).toLocaleString("pt-BR")
+                      ) : (
+                        <span className="text-success">⏵ rodando</span>
+                      )}
+                    </TD>
+                    <TD className="text-right tabular-nums">
+                      {e.ended_at ? fmtDuration(seconds) : "—"}
+                    </TD>
+                    <TD className="text-right">{brl(e.hourly_rate)}</TD>
+                    <TD className="text-right font-medium">
+                      {e.ended_at ? brl(cost) : "—"}
+                    </TD>
+                    <TD className="text-right">
+                      {e.user_id === meId && (
+                        <div className="flex justify-end gap-1">
+                          {e.ended_at && <EditTimeEntryDialog entry={e} />}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={async () => {
+                              if (!confirm("Excluir esse apontamento?")) return;
+                              const r = await deleteTimeEntry(e.id);
+                              if (r.error) toast.error(r.error);
+                              else toast.success("Apontamento removido");
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
